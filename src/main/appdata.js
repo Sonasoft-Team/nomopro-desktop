@@ -2,6 +2,9 @@ const { app } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const logger = require("./logger");
+const {
+  resolveArduinoConfigFile,
+} = require("../link/src/lib/arduino-config-path");
 
 const WINDOWS_ARDUINO_DATA_ROOT = path.join(
   "C:",
@@ -344,14 +347,19 @@ function extractBundledAvrCore(appRoot) {
 }
 
 /**
- * Generate arduino-cli.yaml with data directory pointing to AppData.
- * Overwrites the existing config file in the app directory.
+ * Generate/merge arduino-cli.yaml with data directory pointing to AppData.
+ * Ditulis ke lokasi writable (folder install bila bisa, kalau tidak AppData).
  * @param {string} appRoot
  */
 function ensureArduinoCliConfig(appRoot) {
   const dataDir = getArduinoDataPath().replace(/\\/g, "/");
   const arduinoDir = path.join(appRoot, "src/link/tools/Arduino");
-  const configPath = path.join(arduinoDir, "arduino-cli.yaml");
+  // Tulis ke lokasi writable (install dir bila bisa, kalau tidak AppData).
+  const configPath = resolveArduinoConfigFile(arduinoDir);
+  logger.info(
+    "appdata: arduino-cli config -> " + configPath +
+      " (exists=" + fs.existsSync(configPath) + ")",
+  );
 
   try {
     const yaml = require("js-yaml");
@@ -389,16 +397,37 @@ function ensureArduinoCliConfig(appRoot) {
           currentDirs.data === desiredDirs.data &&
           currentDirs.downloads === desiredDirs.downloads &&
           currentDirs.user === desiredDirs.user;
-        const sameUrls =
-          JSON.stringify(currentUrls) === JSON.stringify(desiredUrls);
+        // Cukup default URL jadi subset — JANGAN timpa URL user.
+        const defaultsPresent = desiredUrls.every((u) =>
+          currentUrls.includes(u),
+        );
 
-        if (sameDirs && sameUrls) {
+        if (sameDirs && defaultsPresent) {
           logger.info(
             "appdata: arduino-cli.yaml already up to date -> data dir: " +
               dataDir,
           );
           return;
         }
+
+        // Merge, jangan ganti. Pertahankan setting & URL user; tambah default
+        // yang belum ada. URL bawaan dulu, lalu sisanya.
+        const mergedUrls = Array.from(
+          new Set([...desiredUrls, ...currentUrls]),
+        );
+        const merged = { ...current };
+        merged.directories = desiredDirs;
+        merged.board_manager = {
+          ...(current.board_manager || {}),
+          additional_urls: mergedUrls,
+        };
+
+        fs.writeFileSync(configPath, yaml.dump(merged), "utf8");
+        logger.info(
+          "appdata: merged arduino-cli.yaml (URL user dipertahankan) -> data dir: " +
+            dataDir,
+        );
+        return;
       } catch (e) {
         logger.warn(
           "appdata: failed to parse existing arduino-cli.yaml, rewriting: " +

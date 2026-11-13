@@ -127,6 +127,28 @@ const registerFileStorageHandlers = () => {
 };
 
 function registerIpc({ win, appRoot, socket }) {
+  // Renderer errors -> main log. Throttle identical messages per frame so a
+  // render loop can't flood nomopro.log.
+  const rendererErrSeen = new Map();
+  ipcMain.on("renderer-error", (event, arg) => {
+    const a = arg || {};
+    const key = `${a.kind}|${a.source}|${a.line}|${a.message}`;
+    const now = Date.now();
+    const last = rendererErrSeen.get(key) || 0;
+    if (now - last < 5000) return;
+    rendererErrSeen.set(key, now);
+    if (rendererErrSeen.size > 200) {
+      for (const [k, ts] of rendererErrSeen) {
+        if (now - ts > 60000) rendererErrSeen.delete(k);
+      }
+    }
+    logger.error(
+      `[renderer:${a.kind || "error"}] ${a.message || "unknown"} ` +
+        `(${a.source || a.url || "?"}:${a.line || 0}:${a.column || 0})` +
+        (a.stack ? `\n${a.stack}` : ""),
+    );
+  });
+
   ipcMain.on("login", async (event, arg) => {
     logger.info("Login (ipc)");
     const hwid = getHwid();

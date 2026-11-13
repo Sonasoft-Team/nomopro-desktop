@@ -1,11 +1,12 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.21",
+  "version": "4.0.3",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
     "fetch:driver": "rimraf tools firmwares && node src/link/script/download-tools.js && node src/link/script/download-firmwares.js",
     "start": "electron .",
+    "link:dev": "node scripts/run-link-dev.js",
     "test:smoke": "node test/run-tests.js",
     "test:e2e": "node test/e2e/e2e-test-matrix.js",
     "postinstall": "electron-rebuild -f -w @abandonware/noble",
@@ -123,7 +124,8 @@
   "dependencies": {
     "@abandonware/noble": "^1.9.2-26",
     "@serialport/bindings-cpp": "^13.0.1",
-    "adm-zip": "^0.5.17",
+    "@wasm-fmt/clang-format": "^23.1.1",
+    "adm-zip": "^0.5.18",
     "ansi-string": "^0.2.1",
     "axios": "^1.16.1",
     "bootstrap": "^5.3.8",
@@ -159,7 +161,7 @@
     "@electron/rebuild": "^4.0.4",
     "babel-eslint": "^10.1.0",
     "copy-dir": "^1.3.0",
-    "electron": "^42.1.0",
+    "electron": "42.1.0",
     "electron-builder": "^24.9.1",
     "eslint": "^10.4.0",
     "jsdoc": "^4.0.5",

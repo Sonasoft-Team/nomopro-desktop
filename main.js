@@ -25,6 +25,21 @@ process.on("uncaughtException", (err) => {
   logger.error(`Uncaught exception: ${(err && err.stack) || err}`);
   throw err;
 });
+
+// Unhandled rejections otherwise disappear silently. Log and continue — a
+// stray rejection must not take the whole app down.
+process.on("unhandledRejection", (reason) => {
+  logger.error(`Unhandled rejection: ${(reason && reason.stack) || reason}`);
+});
+
+// GPU / utility / plugin child process crashes (Chromium) are otherwise
+// invisible. They usually show up to users as a blank or frozen window.
+app.on("child-process-gone", (event, details) => {
+  const d = details || {};
+  logger.error(
+    `Child process gone: type=${d.type} reason=${d.reason} exitCode=${d.exitCode}`,
+  );
+});
 const { io } = require("socket.io-client");
 const { autoUpdater } = require("electron-updater");
 
@@ -184,10 +199,48 @@ const createWindow = () => {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      // Load the preload in subframes too, so the renderer error hook covers
+      // the embedded nomokit-cpp / block iframes. contextIsolation stays on,
+      // so page JS still has no Node access.
+      nodeIntegrationInSubFrames: true,
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomokit-Desktop" + " - " + "v" + app.getVersion(),
+  });
+  // Renderer crash / freeze logging — otherwise the user just sees a dead
+  // window and the log says nothing.
+  win.webContents.on("render-process-gone", (event, details) => {
+    const d = details || {};
+    logger.error(
+      `Renderer gone: reason=${d.reason} exitCode=${d.exitCode}`,
+    );
+  });
+  win.webContents.on("unresponsive", () => {
+    logger.warn("Renderer unresponsive (UI frozen)");
+  });
+  // scratch-gui sets window.onbeforeunload while a project has unsaved
+  // changes. Electron cancels the close silently in that case (no browser
+  // prompt), so clicking X / menu Exit appears dead. Ask, then force the
+  // unload on confirm.
+  win.webContents.on("will-prevent-unload", (event) => {
+    let choice = 1;
+    try {
+      choice = dialog.showMessageBoxSync(win, {
+        type: "warning",
+        buttons: ["Keluar", "Batal"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        message: "Changes you made may not be saved.",
+      });
+    } catch (err) {
+      logger.warn("will-prevent-unload dialog failed: " + err.message);
+    }
+    logger.info(
+      `window close blocked by beforeunload -> ${choice === 0 ? "allow" : "cancel"}`,
+    );
+    if (choice === 0) event.preventDefault();
   });
   win.maximize();
   if (!app.isPackaged) win.webContents.openDevTools();
@@ -264,13 +317,24 @@ const syncLink = async (windowUpdate) => _syncLink(win, appRoot, windowUpdate);
 app.whenReady().then(async () => {
   // Zombie second instance: quit was already requested, do nothing.
   if (isSecondInstance) return;
+  logger.info(
+    `=== start app=${app.getVersion()} electron=${process.versions.electron} ` +
+      `chrome=${process.versions.chrome} node=${process.versions.node} ` +
+      `${process.platform}/${process.arch} packaged=${app.isPackaged} ===`,
+  );
   const {
     ensureArduinoDataDir,
     ensureAppDataDir,
     migrateArduinoData,
     extractBundledAvrCore,
     ensureArduinoCliConfig,
+    getArduinoDataRoot,
   } = require("./src/main/appdata");
+  logger.info(
+    `paths: userData=${app.getPath("userData")} ` +
+      `tools=${path.join(__dirname, "src/link/tools")} ` +
+      `arduinoData=${getArduinoDataRoot()}`,
+  );
   migrateArduinoData(__dirname);
   ensureArduinoDataDir();
   // libraries stay at src/link/tools/Arduino/libraries — no AppData mirror needed

@@ -2,6 +2,52 @@ const { shell, ipcRenderer, contextBridge } = require("electron");
 
 const registeredListeners = new Map();
 
+// Surface uncaught renderer errors to the main-process log. Without this,
+// Svelte / DOM / promise errors only exist in the devtools console (or nowhere
+// in prod). Runs in the isolated preload world but receives page error events.
+function reportRendererError(kind, detail = {}) {
+  try {
+    ipcRenderer.send("renderer-error", {
+      kind,
+      message: detail.message || "",
+      stack: detail.stack || "",
+      source: detail.source || "",
+      line: detail.line || 0,
+      column: detail.column || 0,
+      url: (window.location && window.location.href) || "",
+      t: Date.now(),
+    });
+  } catch (_) {
+    // reporting must never break the page
+  }
+}
+
+window.addEventListener("error", (e) => {
+  // Resource load failures (img/script/link) have no `error` object.
+  if (e && e.error) {
+    reportRendererError("error", {
+      message: e.error.message || e.message,
+      stack: e.error.stack,
+      source: e.filename,
+      line: e.lineno,
+      column: e.colno,
+    });
+  } else if (e && e.target && e.target !== window) {
+    reportRendererError("resource", {
+      message: `failed to load ${e.target.tagName}`,
+      source: e.target.src || e.target.href || "",
+    });
+  }
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e && e.reason;
+  reportRendererError("unhandledrejection", {
+    message: (r && r.message) || String(r),
+    stack: r && r.stack,
+  });
+});
+
 window.addEventListener("DOMContentLoaded", async () => {
   const btn = document.getElementById("login");
   const error = document.getElementById("error");
@@ -102,6 +148,10 @@ const appDir = __dirname;
 contextBridge.exposeInMainWorld("electronAPI", {
   // Method to get app path for local file loading
   getAppPath: () => appDir,
+  // Explicitly report a caught renderer error to the main-process log.
+  reportError: (payload) => {
+    reportRendererError("manual", payload || {});
+  },
   // Python candidates (virtualenv priority)
   getPythonCandidates: async () => {
     return await ipcRenderer.invoke("get-python-candidates");
@@ -346,6 +396,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     getIntents: async () => {
       return await ipcRenderer.invoke("nlp:get-intents");
+    },
+    // Intent count — how many intents are currently trained
+    intentCount: async () => {
+      const intents = await ipcRenderer.invoke("nlp:get-intents");
+      return Array.isArray(intents) ? intents.length : 0;
     },
     uploadCsv: async () => {
       return await ipcRenderer.invoke("nlp:upload-csv");

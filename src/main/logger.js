@@ -1,7 +1,13 @@
 const logger = require("electron-log");
 const os = require("os");
 
-logger.transports.file.level = "info";
+// Level bisa dinaikkan untuk support tanpa rebuild: NOMOKIT_LOG_LEVEL=debug.
+const LEVEL = ["debug", "verbose", "info", "warn", "error"].includes(
+  process.env.NOMOKIT_LOG_LEVEL,
+)
+  ? process.env.NOMOKIT_LOG_LEVEL
+  : "info";
+logger.transports.file.level = LEVEL;
 logger.transports.file.maxSize = 5 * 1024 * 1024; // 5 MB max (L4)
 logger.transports.file.appName = "nomopro-desktop";
 

@@ -22,7 +22,8 @@ const DEFAULT_TOOLS_PATH = path.join(__dirname, "../tools");
  * Configuration the default host.
  * @readonly
  */
-const DEFAULT_HOST = "0.0.0.0";
+// Gerbang G5 — hanya loopback. Peer LAN tak bisa menyentuh session C++/block.
+const DEFAULT_HOST = "127.0.0.1";
 
 /**
  * Configuration the default port.
@@ -46,14 +47,19 @@ const REOPEN_INTERVAL = 1000 * 1;
  * Configuration the server routers.
  * @readonly
  */
+const cppRouter = {
+  "/openblock/cpp": require("./session/cpp"), // eslint-disable-line global-require
+};
 const ROUTERS =
   process.platform !== "darwin"
     ? {
         "/openblock/ble": require("./session/ble"), // eslint-disable-line global-require
         "/openblock/serialport": require("./session/serialport"), // eslint-disable-line global-require
+        ...cppRouter,
       }
     : {
         "/openblock/serialport": require("./session/serialport"), // eslint-disable-line global-require
+        ...cppRouter,
       };
 
 /**
@@ -91,9 +97,20 @@ class OpenBlockLink extends Emitter {
         const Session = ROUTERS[pathname];
         let session;
         if (Session) {
-          session = new Session(socket, this.userDataPath, this.toolsPath);
-          console.info("new connection");
+          session = new Session(
+            socket,
+            this.userDataPath,
+            this.toolsPath,
+            request,
+          );
+          console.info(
+            `new connection ${pathname} origin=${request.headers.origin}`,
+          );
           this.emit("new-connection");
+          this.emit("connection", {
+            pathname,
+            origin: request.headers.origin,
+          });
         } else {
           return socket.close();
         }
@@ -166,7 +183,7 @@ class OpenBlockLink extends Emitter {
       });
     });
 
-    this._httpServer.listen(this._port, "0.0.0.0", () => {
+    this._httpServer.listen(this._port, this._host, () => {
       this.emit("ready");
       console.info(
         clc.green(

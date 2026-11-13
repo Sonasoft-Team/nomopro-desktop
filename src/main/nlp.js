@@ -393,11 +393,12 @@ function registerNlpHandlers() {
   });
 
   ipcMain.handle("nlp:download-csv-template", async () => {
+    // Must match the format expected by train-from-csv (label,text).
     const csvContent =
-      "name,age,city\nAlice,25,New York\nBob,30,Los Angeles\nCharlie,22,Chicago\nDiana,28,Houston";
+      "label,text\ngreeting,hello\ngreeting,good morning\ngreeting,hey there\ngoodbye,bye\ngoodbye,see you later\nquestion,what is this\nquestion,how does it work";
     const result = await dialog.showSaveDialog({
       title: "Download CSV Template",
-      defaultPath: "nlp-template.csv",
+      defaultPath: "nlp-training-template.csv",
       filters: [{ name: "CSV Files", extensions: ["csv"] }],
     });
 

@@ -572,6 +572,68 @@ const collectDiagnostics = async (event, { appRoot }) => {
     }
   }
 
+  // Arduino config health — where arduino-cli.yaml resolved to, whether it
+  // exists, and the dirs/URLs it holds. This is the exact thing that produced
+  // empty Preferences silently.
+  try {
+    const { getArduinoDataPath } = require("./appdata");
+    const {
+      resolveArduinoConfigFile,
+    } = require("../link/src/lib/arduino-config-path");
+    const arduinoDir = path.join(appRoot, "src/link/tools/Arduino");
+    const configFile = resolveArduinoConfigFile(arduinoDir);
+    const health = {
+      configFile,
+      exists: fs.existsSync(configFile),
+      dataRoot: getArduinoDataPath(),
+    };
+    health.dataRootExists = fs.existsSync(health.dataRoot);
+    if (health.exists) {
+      try {
+        const yaml = require("js-yaml");
+        const cfg = yaml.load(fs.readFileSync(configFile, "utf8")) || {};
+        health.directories = cfg.directories || {};
+        health.additionalUrls =
+          (cfg.board_manager && cfg.board_manager.additional_urls) || [];
+      } catch (e) {
+        health.parseError = e.message;
+      }
+    }
+    bundle.arduino = health;
+  } catch (e) {
+    bundle.arduino = { error: e.message };
+  }
+
+  // Real log files — electron-log (main) + crash-safe upload trace. The
+  // runnerLogs block above reads <appRoot>/logs, which is not where the app
+  // actually writes.
+  const logs = {};
+  try {
+    const f = logger.transports.file.getFile();
+    logs.electronLogPath = f && f.path;
+  } catch (_) {}
+  try {
+    if (logs.electronLogPath && fs.existsSync(logs.electronLogPath)) {
+      const raw = fs.readFileSync(logs.electronLogPath, "utf8");
+      logs.electronLogSize = fs.statSync(logs.electronLogPath).size;
+      logs.electronLogTail = raw.split("\n").filter(Boolean).slice(-200).join("\n");
+    }
+  } catch (e) {
+    logs.electronLogError = e.message;
+  }
+  try {
+    const { getLogPath } = require("../link/src/lib/trace-log");
+    logs.traceLogPath = getLogPath();
+    if (fs.existsSync(logs.traceLogPath)) {
+      const raw = fs.readFileSync(logs.traceLogPath, "utf8");
+      logs.traceLogSize = fs.statSync(logs.traceLogPath).size;
+      logs.traceLogTail = raw.split("\n").filter(Boolean).slice(-200).join("\n");
+    }
+  } catch (e) {
+    logs.traceLogError = e.message;
+  }
+  bundle.logs = logs;
+
   return { success: true, bundle };
 };
 
@@ -655,13 +717,41 @@ const generateReport = async (event, { appRoot }) => {
   }
   report += `\n`;
 
+  report += `## Arduino Config\n`;
+  if (bundle.arduino && !bundle.arduino.error) {
+    report += `  Config file: ${bundle.arduino.configFile}\n`;
+    report += `  Exists: ${bundle.arduino.exists}\n`;
+    report += `  Data root: ${bundle.arduino.dataRoot} (exists=${bundle.arduino.dataRootExists})\n`;
+    if (bundle.arduino.directories) {
+      report += `  directories.data: ${bundle.arduino.directories.data || "(unset)"}\n`;
+      report += `  directories.user: ${bundle.arduino.directories.user || "(unset)"}\n`;
+    }
+    if (bundle.arduino.additionalUrls) {
+      report += `  additional_urls: ${bundle.arduino.additionalUrls.length}\n`;
+    }
+    if (bundle.arduino.parseError) {
+      report += `  parseError: ${bundle.arduino.parseError}\n`;
+    }
+  } else {
+    report += `  (unavailable${bundle.arduino ? ": " + bundle.arduino.error : ""})\n`;
+  }
+  report += `\n`;
+
   report += `## Diagnostics Logs\n`;
   if (bundle.runnerLogs && bundle.runnerLogs.length > 0) {
     for (const log of bundle.runnerLogs) {
       report += `  ${log.name} (${log.size} bytes, ${log.modifiedAt})\n`;
     }
   } else {
-    report += `  (none)\n`;
+    report += `  (no runner logs in appRoot/logs)\n`;
+  }
+  if (bundle.logs) {
+    if (bundle.logs.electronLogPath) {
+      report += `  main log: ${bundle.logs.electronLogPath} (${bundle.logs.electronLogSize || 0} bytes)\n`;
+    }
+    if (bundle.logs.traceLogPath) {
+      report += `  upload trace: ${bundle.logs.traceLogPath} (${bundle.logs.traceLogSize || 0} bytes)\n`;
+    }
   }
   report += `\n`;
   report += `============================================\n`;

@@ -4,6 +4,10 @@ const path = require("path");
 const ansi = require("ansi-string");
 const yaml = require("js-yaml");
 const os = require("os");
+const {
+  resolveArduinoConfigFile,
+} = require("../lib/arduino-config-path");
+const traceLog = require("../lib/trace-log");
 
 const AVRDUDE_STDOUT_GREEN_START = /Reading \||Writing \|/g;
 const AVRDUDE_STDOUT_GREEN_END = /%/g;
@@ -20,14 +24,14 @@ class Arduino {
       this._peripheralPath = peripheralPath;
       this._arduinoPath = path.join(toolsPath, "Arduino");
       this._arduinoCliPath = path.join(this._arduinoPath, "arduino-cli");
-      this._configFile = path.join(this._arduinoPath, "arduino-cli.yaml");
+      this._configFile = resolveArduinoConfigFile(this._arduinoPath);
       this._sendstd = sendstd;
     } else {
       this._peripheralPath = peripheralPath;
       this._config = config;
       this._userDataPath = userDataPath;
       this._arduinoPath = path.join(toolsPath, "Arduino");
-      this._configFile = path.join(this._arduinoPath, "arduino-cli.yaml");
+      this._configFile = resolveArduinoConfigFile(this._arduinoPath);
       this._sendstd = sendstd;
 
       this._abort = false;
@@ -53,6 +57,7 @@ class Arduino {
       this._codeFolderPath = path.join(this._projectfilePath, "code");
       this._codefilePath = path.join(this._codeFolderPath, "code.ino");
       this._buildPath = path.join(this._projectfilePath, "build");
+      this._exportPath = path.join(this._projectfilePath, "export");
     }
 
     this.initArduinoCli();
@@ -61,6 +66,10 @@ class Arduino {
   initArduinoCli() {
     // config file (arduino-cli.yaml) is shipped with the app with correct paths
     if (!fs.existsSync(this._configFile)) {
+      traceLog.trace(
+        "config",
+        `missing, running config init -> ${this._configFile}`,
+      );
       spawnSync(this._arduinoCliPath, [
         "config",
         "init",
@@ -68,20 +77,49 @@ class Arduino {
         this._configFile,
       ]);
     }
+    traceLog.trace(
+      "config",
+      `file=${this._configFile} exists=${fs.existsSync(this._configFile)}`,
+    );
   }
 
   abortUpload() {
     this._abort = true;
   }
 
-  build(code, library = []) {
+  // Folder tempat `--output-dir` menaruh .hex/.bin hasil compile.
+  exportDir() {
+    return this._exportPath;
+  }
+
+  build(code, library = [], options = {}) {
     return new Promise((resolve, reject) => {
       if (!fs.existsSync(this._codeFolderPath)) {
         fs.mkdirSync(this._codeFolderPath, { recursive: true });
       }
 
       try {
-        fs.writeFileSync(this._codefilePath, code);
+        if (code && typeof code === "object") {
+          // Multi-file sketch (mode C++). Wajib ada "code.ino" — nama wajib
+          // cocok dengan folder sketch "code" agar setup() terdeteksi.
+          if (!Object.prototype.hasOwnProperty.call(code, "code.ino")) {
+            return reject(
+              new Error("multi-file sketch must contain a 'code.ino' entry"),
+            );
+          }
+          // Folder sketch dipakai ulang antar build. Bersihkan dulu supaya
+          // file yang dihapus/di-rename di frontend tidak tetap ikut
+          // ter-compile.
+          fs.rmSync(this._codeFolderPath, { recursive: true, force: true });
+          fs.mkdirSync(this._codeFolderPath, { recursive: true });
+          for (const name of Object.keys(code)) {
+            const safe = path.basename(name);
+            if (safe !== name) continue; // tolak path traversal
+            fs.writeFileSync(path.join(this._codeFolderPath, safe), code[name]);
+          }
+        } else {
+          fs.writeFileSync(this._codefilePath, code);
+        }
       } catch (err) {
         return reject(err);
       }
@@ -108,6 +146,20 @@ class Arduino {
         }
       });
 
+      // Flag WAJIB sebelum path sketch (posisional) — kalau ditaruh setelahnya
+      // arduino-cli mengabaikannya dan tak ada biner yang diekspor.
+      if (options.exportBinaries) {
+        args.splice(args.length - 1, 0, "--export-binaries", "--output-dir", this._exportPath);
+      }
+
+      const started = Date.now();
+      const fqbn = (this._config && this._config.fqbn) || "update";
+      const fileCount =
+        code && typeof code === "object" ? Object.keys(code).length : 1;
+      traceLog.trace(
+        "build",
+        `compile START fqbn=${fqbn} files=${fileCount}`,
+      );
       const arduinoBuilder = spawn(this._arduinoCliPath, args, {
         cwd: this._arduinoPath,
       });
@@ -151,6 +203,10 @@ class Arduino {
 
       arduinoBuilder.on("exit", (outCode) => {
         clearInterval(listenAbortSignal);
+        traceLog.trace(
+          "build",
+          `compile exit=${outCode} ${Date.now() - started}ms fqbn=${fqbn}`,
+        );
         this._sendstd(`${ansi.clear}\r\n`); // End ansi color setting
         switch (outCode) {
           case null:
@@ -181,7 +237,7 @@ class Arduino {
     return soure.slice(0, start) + newStr + soure.slice(start);
   }
 
-  async flash(firmwarePath = null) {
+  async flash(firmwarePath = null, options = {}) {
     const args = [
       "upload",
       "--config-file",
@@ -189,9 +245,12 @@ class Arduino {
       "--fqbn",
       this._config.fqbn,
       "--verbose",
-      "--verify",
       `-p${this._peripheralPath}`,
     ];
+    // --verify menambah waktu; bisa di-skip lewat opsi.
+    if (!options.skipVerify) {
+      args.push("--verify");
+    }
 
     // for k210 we must specify the programmer used as kflash
     if (this._config.fqbn.startsWith("Maixduino:k210:")) {
@@ -205,11 +264,17 @@ class Arduino {
     }
 
     return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const fqbn = (this._config && this._config.fqbn) || "update";
+      traceLog.trace("build", `upload START fqbn=${fqbn} port=${this._peripheralPath}`);
       const avrdude = spawn(this._arduinoCliPath, args, {
         cwd: this._arduinoPath,
       });
 
+      // Simpan ekor stderr untuk pesan error yang benar (bukan selalu "avrdude").
+      let errTail = "";
       avrdude.stderr.on("data", (buf) => {
+        errTail = (errTail + buf.toString()).slice(-800);
         let data = buf.toString();
 
         // todo: Because the feacture of avrdude sends STD information intermittently.
@@ -252,6 +317,10 @@ class Arduino {
       });
 
       avrdude.on("exit", (code) => {
+        traceLog.trace(
+          "build",
+          `upload exit=${code} ${Date.now() - started}ms fqbn=${fqbn}`,
+        );
         switch (code) {
           case 0:
             if (
@@ -272,8 +341,17 @@ class Arduino {
               return resolve("Success");
             }
             break;
-          case 1:
-            return reject(new Error("avrdude failed to flash"));
+          case 1: {
+            // Pakai baris stderr terakhir yang informatif (esptool/avrdude/openocd).
+            const clean = errTail.replace(/\u001b\[[0-9;]*m/g, "");
+            const last =
+              clean
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter((l) => l && !/^Compressed |^Writing at /i.test(l))
+                .pop() || "";
+            return reject(new Error(last || "Upload failed"));
+          }
         }
       });
     });
