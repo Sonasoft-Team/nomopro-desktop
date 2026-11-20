@@ -11,3 +11,7 @@ build/avr-core/
 build/avr-staging/
 .worktrees/
 test/
+
+# The GUI is installed from the family release pinned in gui.lock.json: npm run fetch:gui
+src/gui/
+nomokitjr/

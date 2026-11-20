@@ -80,18 +80,29 @@ directory.
 
 ## Architecture
 
-**`src/gui` is a copied snapshot, not built from source here.** It's a manually-dropped-in copy of
-`nomopro-mono/openblock-gui`'s combined production build, including its nested `src/gui/nomokitjr/`,
-`src/gui/nomokit-ml/` and `src/gui/nomokit-cpp/` embeds (see `nomopro-mono/scripts/build-family.sh`
-and the workspace's `bundling-nomokit-family` skill for how that build is assembled; older snapshots
-came from the legacy `nomopro/openblock-gui` checkout). Editing anything under `src/gui` directly, or
-editing `openblock-gui`'s source in the sibling monorepo, has **no effect** on this app until someone
-rebuilds `openblock-gui` and re-copies its `build/` output here — there is no build step in this
-repo's own `package.json` that produces `src/gui`. Separately, `package.json`'s
-`extraResources` config lists `{ "from": "src/nomokitjr", "to": "nomokitjr" }` — but there is no
-`src/nomokitjr` directory in this repo, only `src/gui/nomokitjr`; as written, that `extraResources`
-entry is either a no-op or an electron-builder error, not a real copy of the Jr bundle into the
-packaged app. Confirm before relying on it.
+**`src/gui` and `nomokitjr/` are not in git — `npm run fetch:gui` installs them.** They come from
+the NomoKit family GitHub Release pinned in `gui.lock.json` (built by
+`Sonasoft-Team/monorepo-nomopro`'s `release.yml`): `scripts/fetch-gui.js` downloads `gui.zip`,
+checks it against `SHA256SUMS`, replaces `src/gui` (Pro GUI with nested `nomokitjr/`, `nomokit-ml/`,
+`nomokit-cpp/`), copies `src/gui/nomokitjr` to the root `nomokitjr/` (the Pro GUI opens Jr from
+`<app>/nomokitjr` under `file://`), and sets `"gui"` in `src/version.json` to the pinned tag. Run it
+once after cloning, and again after changing `gui.lock.json`. It needs a token: `GITHUB_TOKEN` /
+`FAMILY_REPO_TOKEN`, or a logged-in `gh`. Editing files under `src/gui` by hand does nothing durable.
+
+**GUI version and in-app updates must move together.** On start-up `src/main/sync.js` compares
+`src/version.json` `"gui"` with `"gui"` from `https://nomo-kit.com/api/check-update-dektop` and offers
+the server's `gui.zip` whenever they **differ** — including when the server's is older. The server
+side is `nomokit`'s `bundles.lock.json` → `desktop_gui`. So to ship a new GUI:
+1. In `nomokit`, set `desktop_gui` to `{ "version": "<tag>", "from_release": true }` and deploy. From
+   then on, installed apps are offered that GUI as an in-app update.
+2. Here, set `gui.lock.json` `family` to the same `<tag>`, run `npm run fetch:gui`, commit, tag `v*`.
+The release workflow runs `fetch-gui.js --check`, which **refuses to build** if step 1 hasn't
+happened — otherwise every fresh install would be offered a "downgrade" to the server's GUI.
+After a GUI update `sync.js` also refreshes `<app>/nomokitjr` from the new `src/gui/nomokitjr`.
+
+CI needs a `FAMILY_REPO_TOKEN` repository secret (read access to `Sonasoft-Team/monorepo-nomopro`
+releases). `desktop-ci.yml` skips the GUI download without it (e.g. pull requests from forks);
+`release.yml` fails without it.
 
 **Process split.** Standard Electron main/preload/renderer, but the app boots straight into static
 HTML pages loaded via `win.loadFile` rather than a single SPA shell — `main.js` decides which page to
