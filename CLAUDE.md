@@ -81,16 +81,13 @@ directory.
 ## Architecture
 
 **`src/gui` is a copied snapshot, not built from source here.** It's a manually-dropped-in copy of
-`nomopro/openblock-gui`'s combined production build (confirmed matching file listing, including that
-build's own nested `src/gui/nomokitjr/` — see `nomopro/openblock-gui/CLAUDE.md`'s "Embedded sibling
-bundles" section and `nomopro/CLAUDE.md`'s bundling overview for how that upstream build is
-assembled). Editing anything under `src/gui` directly, or editing `openblock-gui`'s source in the
-sibling repo, has **no effect** on this app until someone rebuilds `openblock-gui` and re-copies its
-`build/` output here — there is no build step in this repo's own `package.json` that produces
-`src/gui`. Note this checkout's `src/gui` does **not** have a nested `nomokit-ml/` folder (unlike the
-current `nomopro/openblock-gui` checkout, which does) — the copied snapshot here predates that embed,
-or ML-tool bundling for desktop just hasn't been done yet; don't assume the ML overlay works in this
-app without checking `src/gui` for a `nomokit-ml/` folder first. Separately, `package.json`'s
+`nomopro-mono/openblock-gui`'s combined production build, including its nested `src/gui/nomokitjr/`,
+`src/gui/nomokit-ml/` and `src/gui/nomokit-cpp/` embeds (see `nomopro-mono/scripts/build-family.sh`
+and the workspace's `bundling-nomokit-family` skill for how that build is assembled; older snapshots
+came from the legacy `nomopro/openblock-gui` checkout). Editing anything under `src/gui` directly, or
+editing `openblock-gui`'s source in the sibling monorepo, has **no effect** on this app until someone
+rebuilds `openblock-gui` and re-copies its `build/` output here — there is no build step in this
+repo's own `package.json` that produces `src/gui`. Separately, `package.json`'s
 `extraResources` config lists `{ "from": "src/nomokitjr", "to": "nomokitjr" }` — but there is no
 `src/nomokitjr` directory in this repo, only `src/gui/nomokitjr`; as written, that `extraResources`
 entry is either a no-op or an electron-builder error, not a real copy of the Jr bundle into the
