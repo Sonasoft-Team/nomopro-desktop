@@ -122,8 +122,12 @@ async function _syncResource(
     const version = JSON.parse(
       fs.readFileSync(path.join(appRoot, "src/version.json"), "utf8"),
     );
+    // Send this app's version so the server only offers a GUI this app can run (min_app in
+    // nomokit's bundles.lock.json). Apps before 4.0.4 sent nothing and keep getting the old GUI.
+    const { app: electronApp } = require("electron");
     const response = await axios.get(
       "https://nomo-kit.com/api/check-update-dektop",
+      { params: { app: electronApp.getVersion() } },
     );
     const data = response.data;
     if (data[versionField] !== version[versionField]) {

@@ -8,7 +8,7 @@
  *
  *   node scripts/fetch-gui.js            download, verify, install
  *   node scripts/fetch-gui.js --check    also require nomo-kit.com's update API to announce the
- *                                        same GUI version (release builds use this; see below)
+ *                                        same GUI version to this app version (release builds)
  *
  * What it does:
  *   1. reads gui.lock.json -> { family_repo, family }
@@ -77,7 +77,9 @@ async function main() {
   if (!repo || !tag) fail("gui.lock.json needs family_repo and family");
 
   if (CHECK) {
-    const res = await fetch(UPDATE_API);
+    // Ask exactly what an installed copy of THIS build will be told: the app sends its version.
+    const appVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+    const res = await fetch(`${UPDATE_API}?app=${encodeURIComponent(appVersion)}`);
     if (!res.ok) fail(`cannot reach ${UPDATE_API} (${res.status})`);
     const announced = (await res.json()).gui;
     if (announced !== tag) {
@@ -85,7 +87,8 @@ async function main() {
         `nomo-kit.com announces GUI "${announced}" but this build pins "${tag}".\n` +
           `  Installed apps would be told to replace this GUI with "${announced}".\n` +
           `  Switch the server first: in nomokit, set bundles.lock.json desktop_gui to ` +
-          `{ "version": "${tag}", "from_release": true } and deploy, then release again.`,
+          `{ "version": "${tag}", "from_release": true, "min_app": "<lowest app version that can run it>" }` +
+          ` and deploy (app ${appVersion} must be >= min_app), then release again.`,
       );
     }
     console.log(`fetch-gui: nomo-kit.com already announces ${tag}`);
