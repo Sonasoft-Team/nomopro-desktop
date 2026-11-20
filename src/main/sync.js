@@ -155,6 +155,20 @@ async function _syncResource(
               fs.rmSync(targetPath, { recursive: true, force: true });
             }
             await extract(filePath, { dir: targetPath });
+            // The Pro GUI opens Jr from <app>/nomokitjr (not src/gui/nomokitjr), so a GUI update
+            // must refresh that copy too, or Jr inside the app never changes after an OTA update.
+            if (versionField === "gui") {
+              const nestedJr = path.join(targetPath, "nomokitjr");
+              const rootJr = path.join(appRoot, "nomokitjr");
+              if (fs.existsSync(path.join(nestedJr, "index.html"))) {
+                try {
+                  fs.rmSync(rootJr, { recursive: true, force: true });
+                  fs.cpSync(nestedJr, rootJr, { recursive: true });
+                } catch (e) {
+                  logger.warn("Failed to refresh nomokitjr after GUI update: " + e.message);
+                }
+              }
+            }
             fs.writeFileSync(
               path.join(appRoot, "src/version.json"),
               JSON.stringify(data),
