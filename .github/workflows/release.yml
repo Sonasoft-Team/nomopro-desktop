@@ -11,6 +11,7 @@ jobs:
   release-macos:
     name: Release macOS
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +48,7 @@ jobs:
     name: Release Windows
     needs: release-macos
     runs-on: windows-2022
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

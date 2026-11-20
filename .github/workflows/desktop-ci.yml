@@ -10,6 +10,7 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: windows-2022
+    timeout-minutes: 30
     env:
       FAMILY_REPO_TOKEN: ${{ secrets.FAMILY_REPO_TOKEN }}
     steps:
@@ -71,6 +72,7 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    timeout-minutes: 30
     env:
       FAMILY_REPO_TOKEN: ${{ secrets.FAMILY_REPO_TOKEN }}
     steps:
