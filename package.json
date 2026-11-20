@@ -31,10 +31,6 @@
   },
   "description": "Nomokit Desktop App",
   "repository": "https://github.com/Xart22/nomopro-desktop",
-  "publish": {
-    "provider": "github",
-    "releaseType": "release"
-  },
   "build": {
     "appId": "com.nomokit.desktop",
     "productName": "Nomokit-Desktop",
@@ -94,13 +90,6 @@
       {
         "from": "python",
         "to": "python",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "src/nomokitjr",
-        "to": "nomokitjr",
         "filter": [
           "**/*"
         ]
