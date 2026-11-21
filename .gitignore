@@ -15,3 +15,7 @@ test/
 # The GUI is installed from the family release pinned in gui.lock.json: npm run fetch:gui
 src/gui/
 nomokitjr/
+
+# Ultralytics/YOLO training output: written to the working directory by a local training run
+/runs/
+/yolov8*.pt
