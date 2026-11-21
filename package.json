@@ -47,7 +47,8 @@
       "!src/gui/**/*.map",
       "!test",
       "data/*.json*",
-      "!readme.md",
+      "!README.md",
+      "!CLAUDE.md",
       "!test"
     ],
     "win": {
