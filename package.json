@@ -31,7 +31,7 @@
     "deploy:win": "npm run prebuild && electron-builder --win -p always"
   },
   "description": "Nomokit Desktop App",
-  "repository": "https://github.com/Xart22/nomopro-desktop",
+  "repository": "https://github.com/Sonasoft-Team/nomopro-desktop",
   "build": {
     "appId": "com.nomokit.desktop",
     "productName": "Nomokit-Desktop",
