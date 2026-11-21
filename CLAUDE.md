@@ -70,7 +70,11 @@ npm run deploy:mac / deploy:win / deploy:all   # same, plus -p always (publishes
   `resourcesPath/python`. Requires network access; on macOS it additionally shells out to `zstd`
   (`brew install zstd`) to decompress the `.tar.zst`. Skips re-downloading if `python/.installed`
   exists.
-- Release flow: bump `version` in `package.json`, commit, push, then tag `vX.Y.Z` and push the tag.
+- Release flow: Actions → **Release desktop** → Run workflow (`release-desktop.yml`; patch / minor /
+  major or an exact version, plus a dry-run option). It checks that nomo-kit.com already announces
+  the `gui.lock.json` GUI to the new version, bumps `package.json` on `main`, tags `vX.Y.Z` and calls
+  `release.yml`. Pushing a `vX.Y.Z` tag by hand still works; `release.yml` refuses a tag that differs
+  from `package.json` `version` (electron-builder publishes by the latter).
   `.github/workflows/release.yml` builds macOS (dmg x64 + arm64) and then Windows (NSIS exe), each
   running `fetch-gui.js --check` and `npm run test:smoke` first, and electron-builder attaches both
   plus `latest*.yml` to one **draft** Release. Publishing it (pre-release for testers, full release
