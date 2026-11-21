@@ -7,13 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 See `../CLAUDE.md` for how this repo fits into the wider NomoKit family. This doc goes deeper on
 `nomopro-desktop` itself.
 
-Two other checkouts in the workspace are related but out of scope here:
-- **`nomo-link`** — the standalone legacy "Nomolink" Electron flasher this repo's `src/link` module
-  was ported from (see "Lineage from nomo-link" below). It's superseded for this app's purposes but
-  still shipped separately for macOS downloads.
-- **`nomopro-desktop-mac`** — an older, flat-structure checkout of this same `Xart22/nomopro-desktop`
-  repo (no `src/{main,link,gui,...}` split). Treat it as a stale snapshot, not a separate product;
-  don't write parallel docs for it.
+Repo: `Sonasoft-Team/nomopro-desktop` (public; transferred from `Xart22`, whose old URL redirects).
+`package.json` `repository` must name the Sonasoft-Team repo: electron-builder derives the GitHub
+owner it publishes to — and bakes into the installers' auto-update config — from that field.
+
+Related but not checked out here: `Xart22/nomo-link`, the standalone legacy "Nomolink" flasher this
+repo's `src/link` was ported from (see the firmware-flashing section below); nomo-kit.com still
+links its macOS download.
 
 ## Commands
 
@@ -51,7 +51,10 @@ npm run build              # prebuild + electron-builder --win  (NSIS installer)
 npm run build:mac          # prebuild + electron-builder --mac  (dmg, x64+arm64)
 npm run deploy:mac / deploy:win / deploy:all   # same, plus -p always (publishes to GitHub Releases)
 ```
-- `prebuild` = `clean:tools` (wipes `src/link/tools/Arduino/{staging,tmp}`) + `prebuild:avr`.
+- `prebuild` = `clean:tools` (wipes `src/link/tools/Arduino/{staging,tmp}`) →
+  `scripts/install_arduino_cli.js` (bundles `arduino-cli`; the app needs it at runtime) →
+  `prebuild:avr` → `prebuild:avr-core` (`scripts/prepare-avr-core.js`, into `build/avr-core`) →
+  `install_python_payload.js` → `build-venv.js`. `prebuild:mac` is the same.
 - `prebuild:avr` runs `arduino-cli core install arduino:avr --config-file arduino-cli.yaml` **only
   if** `src/link/tools/Arduino/arduino-cli.yaml` exists and the AVR core isn't already installed
   under its configured data dir. This needs `arduino-cli` on PATH and network access to Arduino's
@@ -67,16 +70,21 @@ npm run deploy:mac / deploy:win / deploy:all   # same, plus -p always (publishes
   `resourcesPath/python`. Requires network access; on macOS it additionally shells out to `zstd`
   (`brew install zstd`) to decompress the `.tar.zst`. Skips re-downloading if `python/.installed`
   exists.
-- Actual release flow (from README, still accurate): bump `version` in `package.json`, commit, push,
-  then tag `vX.Y.Z` and push the tag — GitHub Actions builds macOS first (dmg) then Windows (exe) and
-  attaches both to one draft Release.
+- Release flow: bump `version` in `package.json`, commit, push, then tag `vX.Y.Z` and push the tag.
+  `.github/workflows/release.yml` builds macOS (dmg x64 + arm64) and then Windows (NSIS exe), each
+  running `fetch-gui.js --check` and `npm run test:smoke` first, and electron-builder attaches both
+  plus `latest*.yml` to one **draft** Release. Publishing it (pre-release for testers, full release
+  for everyone — `electron-updater` follows the latest full release) is a manual step on GitHub.
+  macOS builds are not signed/notarized yet. `desktop-ci.yml` builds Windows on every push/PR to
+  `main` without publishing. Every job is capped at 30 minutes.
 
 Release-relevant `package.json` quirks worth knowing before touching the build config: `asar` is
 `false` and `npmRebuild` is `false` (native `@abandonware/noble`/`serialport` binaries are rebuilt
-once via `postinstall`, not on every package). `files` explicitly excludes `python`, `test`, and the
-Arduino `staging/tmp/packages` dirs from the app bundle — `python` and `src/nomokitjr` are instead
-injected via `extraResources` so they land in `resourcesPath` rather than inside the asar-less app
-directory.
+once via `postinstall`, not on every package). `files` excludes `python`, `test`, `README.md`,
+`CLAUDE.md`, GUI sourcemaps and the Arduino `staging/tmp/packages` dirs from the app bundle (patterns
+are case-sensitive). `python/`, `data/python-env` and `build/avr-core` are injected via
+`extraResources` so they land in `resourcesPath` rather than inside the asar-less app directory.
+Local Ultralytics/YOLO training output (`runs/`, `yolov8*.pt`) is gitignored so it can't ship.
 
 ## Architecture
 
@@ -93,8 +101,11 @@ once after cloning, and again after changing `gui.lock.json`. It needs a token: 
 `src/version.json` `"gui"` with `"gui"` from `https://nomo-kit.com/api/check-update-dektop` and offers
 the server's `gui.zip` whenever they **differ** — including when the server's is older. The server
 side is `nomokit`'s `bundles.lock.json` → `desktop_gui`. So to ship a new GUI:
-1. In `nomokit`, set `desktop_gui` to `{ "version": "<tag>", "from_release": true }` and deploy. From
-   then on, installed apps are offered that GUI as an in-app update.
+1. In `nomokit`, set `desktop_gui` to `{ "version": "<tag>", "from_release": true, "min_app": "<x.y.z>" }`
+   and deploy. From then on, installed apps whose version is at least `min_app` (they send it as
+   `?app=`) are offered that GUI as an in-app update; older apps keep the old GUI. Set `min_app` to
+   the first app version that can run the new GUI (today `4.0.4`, for the Nomo C++ link session).
+   Without `min_app`, every installed app is offered it.
 2. Here, set `gui.lock.json` `family` to the same `<tag>`, run `npm run fetch:gui`, commit, tag `v*`.
 The release workflow runs `fetch-gui.js --check`, which **refuses to build** if step 1 hasn't
 happened — otherwise every fresh install would be offered a "downgrade" to the server's GUI.
@@ -116,7 +127,7 @@ narrower bridge used only by the Arduino-tools update popup window.
 |---|---|
 | `ipc.js` | Core IPC: `login`/`logout`/`getUserData` handlers (calls `nomo-kit.com/api/login`), plus the renderer-facing file storage API (save/read/list/delete project files under `~/Documents/OpenBlock`). |
 | `socket.js` | Socket.IO client event handlers: reloads to the disconnected page, redirects to GUI/auth on `connect`, force-logs-out and relaunches on `login-fail` (another device logged into the same account). |
-| `sync.js` | Startup self-update: `syncLibrary` pulls Arduino library bundle updates from `/api/check-update`; `syncGui`/`syncLink` poll `/api/check-update-dektop` and, on version mismatch, download+extract a fresh `src/gui` or `src/link` zip and relaunch the app. |
+| `sync.js` | Startup self-update: `syncLibrary` pulls Arduino library bundle updates from `/api/check-update`; `syncGui`/`syncLink` poll `/api/check-update-dektop?app=<app version>` and, on version mismatch, download+extract a fresh `src/gui` or `src/link` zip (a GUI update also refreshes `<app>/nomokitjr`) and relaunch the app. |
 | `link.js` | Boots the embedded `OpenBlockLink` WebSocket server (see below) and triggers a first-run/needed Arduino toolchain update via `arduino-updater.js` + `arduino-update-window.js`. |
 | `arduino-updater.js` | Runs `update.sh`/`update.bat` inside `src/link/tools/Arduino` (first-time AVR core bootstrap) and generic `arduino-cli core install/uninstall` actions, streaming line-by-line progress via an `EventEmitter`. |
 | `arduino-update-window.js` | A small always-on-top `BrowserWindow` (using `preload-update.js`) that renders that progress stream and blocks closing until the operation finishes. |
