@@ -1,0 +1,131 @@
+name: Release desktop
+
+# One click instead of "bump package.json, commit, push, tag, push the tag":
+# Actions -> "Release desktop" -> Run workflow.
+#
+#   bump     patch / minor / major (ignored when "version" is set)
+#   version  an exact version, e.g. 4.1.0 (must be higher than the current one)
+#   dry_run  check everything and show the new version, but commit and tag nothing
+#
+# It bumps "version" in package.json (+ package-lock.json) on main, commits, tags vX.Y.Z, pushes
+# both, then runs release.yml for that tag. The result is a DRAFT GitHub Release, exactly like
+# pushing a tag by hand; publishing it (pre-release or full release) stays a manual click.
+#
+# Before committing anything it checks that nomo-kit.com already announces this repo's
+# gui.lock.json GUI to the NEW app version (release.yml would refuse to build otherwise, leaving a
+# version bump and a tag behind for nothing). See CLAUDE.md -> "GUI version and in-app updates".
+#
+# Why release.yml is called here instead of being triggered by the tag: a tag pushed with the
+# built-in GITHUB_TOKEN does not start other workflows (GitHub's rule against loops).
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Exact version instead (e.g. 4.1.0); leave empty to use the bump"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run: check and show the new version, change nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Bump and tag
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Work out the new version
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          OLD=$(node -p 'require("./package.json").version')
+          if [ -n "$EXACT" ]; then
+            [[ "$EXACT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 4.1.0"; exit 1; }
+            NEW=$EXACT
+          else
+            NEW=$(node -e '
+              const [a, b, c] = process.argv[1].split(".").map(Number);
+              const k = process.argv[2];
+              console.log(k === "major" ? `${a + 1}.0.0` : k === "minor" ? `${a}.${b + 1}.0` : `${a}.${b}.${c + 1}`);
+            ' "$OLD" "$BUMP")
+          fi
+          node -e '
+            const p = s => s.split(".").map(Number), [o, n] = [p(process.argv[1]), p(process.argv[2])];
+            for (let i = 0; i < 3; i++) { if (n[i] > o[i]) process.exit(0); if (n[i] < o[i]) break; }
+            console.error(`::error::${process.argv[2]} is not higher than the current ${process.argv[1]}`); process.exit(1);
+          ' "$OLD" "$NEW"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$NEW" >/dev/null; then
+            echo "::error::tag v$NEW already exists"; exit 1
+          fi
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "### nomopro-desktop $OLD → $NEW" >> "$GITHUB_STEP_SUMMARY"
+
+      # Same rule as `fetch-gui.js --check` in release.yml, asked for the NEW version up front.
+      - name: nomo-kit.com must announce this GUI to the new version
+        env:
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          WANT=$(node -p 'require("./gui.lock.json").family')
+          GOT=$(curl -fsS "https://nomo-kit.com/api/check-update-dektop?app=$NEW" | node -p 'JSON.parse(require("fs").readFileSync(0)).gui')
+          echo "gui.lock.json pins $WANT; nomo-kit.com tells app $NEW: $GOT"
+          [ "$GOT" = "$WANT" ] || {
+            echo "::error::nomo-kit.com offers GUI $GOT to app $NEW, but this build pins $WANT. In nomokit set bundles.lock.json desktop_gui (version $WANT, min_app <= $NEW) and deploy first."
+            exit 1
+          }
+
+      - name: Commit and tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          npm version "$NEW" --no-git-tag-version --allow-same-version >/dev/null
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: $NEW" -m "Bumped by the 'Release desktop' workflow, run by ${{ github.actor }}."
+          git tag "v$NEW"
+          git push --atomic origin HEAD:main "v$NEW"
+          echo "Tagged v$NEW on $(git rev-parse --short HEAD); building the draft release." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run
+        if: ${{ inputs.dry_run }}
+        run: echo "::notice::Dry run -- would release ${{ steps.bump.outputs.tag }}; nothing committed or tagged."
+
+  build:
+    name: Build draft release
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
