@@ -24,6 +24,16 @@ jobs:
       - name: Install dependencies (skip native rebuild for CI)
         run: npm ci --ignore-scripts
 
+      # `npm ci --ignore-scripts` skips package.json's postinstall (electron-rebuild of noble) and
+      # electron-builder's npmRebuild is off, so noble's BLE binding was never compiled and Windows
+      # 4.0.4 shipped without it (the link server failed to load -> blank window). Build it here.
+      - name: Build native modules for Electron (noble)
+        run: npx electron-rebuild -f -w @abandonware/noble
+
+      - name: Check noble's native binding exists
+        shell: bash
+        run: ls -la node_modules/@abandonware/noble/build/Release/*.node
+
       # Needs the FAMILY_REPO_TOKEN secret, which GitHub never gives to pull requests from forks.
       # Without it the build still runs, just without a GUI inside.
       - name: Install the GUI from the pinned family release
@@ -63,6 +73,10 @@ jobs:
 
       - name: Build (unsigned)
         run: npm run build -- --publish=never
+
+      - name: Check the packaged app carries noble's binding
+        shell: bash
+        run: ls -la dist/win-unpacked/resources/app/node_modules/@abandonware/noble/build/Release/*.node
 
       - uses: actions/upload-artifact@v4
         with:

@@ -50,6 +50,13 @@ let win;
 let socket = null;
 let isInstallingUpdate = false;
 let token = {};
+// data/ holds user.json (login token) and is gitignored, so installers built in CI don't contain
+// it; without it login could not save the token ("Failed to save login data"). Create it first.
+try {
+  fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
+} catch (e) {
+  logger.warn("Could not create data/: " + e.message);
+}
 try {
   token = JSON.parse(
     fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8"),
@@ -302,8 +309,11 @@ const createWindow = () => {
   _setMenu({ win, appRoot, app });
   //  START: Link server (before the initial page load — the GUI URL is
   // served by this server, see loadInitialPage above).
-  const { startLink: _startLink } = require("./src/main/link");
+  // The require is inside the try too: loading the link server pulls in native modules (noble for
+  // BLE on Windows). If one fails to load, the app must still show its first page; before 4.0.5 a
+  // throw here skipped loadInitialPage() and left a blank window.
   try {
+    const { startLink: _startLink } = require("./src/main/link");
     link = _startLink({ win });
   } catch (err) {
     logger.warn("Link server failed to start: " + (err.message || err));

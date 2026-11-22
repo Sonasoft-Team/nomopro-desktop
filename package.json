@@ -61,6 +61,7 @@
       "icon": "src/assets/img/nomokit.png",
       "requestedExecutionLevel": "asInvoker"
     },
+    "afterPack": "build/adhoc-sign.js",
     "mac": {
       "category": "public.app-category.education",
       "entitlements": "build/entitlements.mac.plist",

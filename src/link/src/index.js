@@ -50,17 +50,25 @@ const REOPEN_INTERVAL = 1000 * 1;
 const cppRouter = {
   "/openblock/cpp": require("./session/cpp"), // eslint-disable-line global-require
 };
-const ROUTERS =
-  process.platform !== "darwin"
-    ? {
-        "/openblock/ble": require("./session/ble"), // eslint-disable-line global-require
-        "/openblock/serialport": require("./session/serialport"), // eslint-disable-line global-require
-        ...cppRouter,
-      }
-    : {
-        "/openblock/serialport": require("./session/serialport"), // eslint-disable-line global-require
-        ...cppRouter,
-      };
+const ROUTERS = {
+  "/openblock/serialport": require("./session/serialport"), // eslint-disable-line global-require
+  ...cppRouter,
+};
+// BLE (not on macOS) needs noble's native binding. If it is missing or fails to load, keep serial
+// and C++ working instead of taking the whole link server (and the app's first page) down.
+if (process.platform !== "darwin") {
+  try {
+    ROUTERS["/openblock/ble"] = require("./session/ble"); // eslint-disable-line global-require
+  } catch (err) {
+    const msg = `BLE disabled: ${err && err.message}`;
+    console.error(msg); // eslint-disable-line no-console
+    try {
+      require("electron-log").warn(msg); // eslint-disable-line global-require
+    } catch (_) {
+      // not running under Electron (e.g. scripts/run-link-dev.js)
+    }
+  }
+}
 
 /**
  * A server to provide local hardware api.
