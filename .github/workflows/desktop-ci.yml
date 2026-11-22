@@ -25,10 +25,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       # `npm ci --ignore-scripts` skips package.json's postinstall (electron-rebuild of noble) and
-      # electron-builder's npmRebuild is off, so noble's BLE binding is not compiled. Best effort
-      # for now: Electron 42's headers no longer build with MSVC (needs clang-cl), so this fails and
-      # BLE stays off on Windows; the link server then runs without the /openblock/ble route
-      # (src/link/src/index.js) instead of blanking the app as 4.0.4 did. TODO: build with ClangCL.
+      # electron-builder's npmRebuild is off, so noble's BLE binding is compiled here. Only noble:
+      # rebuilding everything also recompiles @serialport/bindings-cpp, which fails with MSVC against
+      # Electron 42's headers ('__builtin_frame_address'), and serialport ships N-API prebuilds anyway.
+      # Best effort: if noble ever fails to build, the link server runs without the /openblock/ble
+      # route (src/link/src/index.js) instead of blanking the app as 4.0.4 did.
       - name: Build noble's BLE binding for Electron (best effort)
         continue-on-error: true
         run: npx electron-rebuild -f --only @abandonware/noble
