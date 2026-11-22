@@ -83,14 +83,22 @@ jobs:
         run: npm ci --ignore-scripts
 
       # `npm ci --ignore-scripts` skips package.json's postinstall (electron-rebuild of noble) and
-      # electron-builder's npmRebuild is off, so noble's BLE binding was never compiled and Windows
-      # 4.0.4 shipped without it (the link server failed to load -> blank window). Build it here.
-      - name: Build native modules for Electron (noble)
-        run: npx electron-rebuild -f -w @abandonware/noble
+      # electron-builder's npmRebuild is off, so noble's BLE binding is not compiled. Best effort
+      # for now: Electron 42's headers no longer build with MSVC (needs clang-cl), so this fails and
+      # BLE stays off on Windows; the link server then runs without the /openblock/ble route
+      # (src/link/src/index.js) instead of blanking the app as 4.0.4 did. TODO: build with ClangCL.
+      - name: Build noble's BLE binding for Electron (best effort)
+        continue-on-error: true
+        run: npx electron-rebuild -f --only @abandonware/noble
 
-      - name: Check noble's native binding exists
+      - name: Report whether BLE is included
         shell: bash
-        run: ls -la node_modules/@abandonware/noble/build/Release/*.node
+        run: |
+          if ls node_modules/@abandonware/noble/build/Release/*.node >/dev/null 2>&1; then
+            echo "noble binding built: BLE included"
+          else
+            echo "::warning::noble's native binding is missing: BLE is disabled in this Windows build"
+          fi
 
       # src/gui and nomokitjr/ are not committed; they come from the family release pinned in
       # gui.lock.json. --check refuses to build an installer whose GUI version nomo-kit.com does not
