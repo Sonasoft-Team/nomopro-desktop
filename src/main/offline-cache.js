@@ -182,7 +182,7 @@ const installFromCache = async (event, { appRoot, packageName }) => {
     getPipSpawnArgs,
   } = require("./pip-manager");
 
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) return venvResult;
 
   const cacheDir = getCacheDir(appRoot);

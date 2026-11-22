@@ -53,7 +53,7 @@ const generateRequirements = async (
     getPipSpawnArgs,
   } = require("./pip-manager");
 
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -115,7 +115,7 @@ const installFromRequirements = async (
     getPipSpawnArgs,
   } = require("./pip-manager");
 
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -225,7 +225,7 @@ const diffRequirements = async (event, { appRoot, projectId = "default" }) => {
     getPipSpawnArgs,
   } = require("./pip-manager");
 
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }

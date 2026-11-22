@@ -10,6 +10,47 @@
  */
 
 const { spawn, spawnSync } = require("child_process");
+
+/**
+ * Async stand-in for spawnSync (same { status, stdout, stderr } result). The venv setup used to run
+ * spawnSync on Electron's main process: downloading get-pip.py and installing virtualenv took
+ * minutes and froze the whole app ("Not responding"). Everything slow below goes through this.
+ */
+const run = (cmd, args, opts = {}) =>
+  new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timer = null;
+    const finish = (status, error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({ status, stdout, stderr, error });
+    };
+    let child;
+    try {
+      child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    } catch (e) {
+      finish(null, e);
+      return;
+    }
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (e) => finish(null, e));
+    child.on("close", (code) => finish(code));
+    if (opts.timeout) {
+      timer = setTimeout(() => {
+        stderr += `\ntimed out after ${opts.timeout} ms`;
+        try {
+          child.kill();
+        } catch (_) {
+          // already gone
+        }
+        finish(null);
+      }, opts.timeout);
+    }
+  });
 const path = require("path");
 const fs = require("fs");
 const logger = require("./logger");
@@ -194,12 +235,12 @@ const findSystemPython = (appRoot) => {
 };
 
 /**
- * Download a file synchronously using powershell (Windows) or curl (macOS).
+ * Download a file (async) using powershell (Windows) or curl (macOS).
  */
-const downloadFileSync = (url, dest) => {
+const downloadFile = async (url, dest) => {
   const isWin = process.platform === "win32";
   const result = isWin
-    ? spawnSync(
+    ? await run(
         "powershell",
         [
           "-NoProfile",
@@ -208,7 +249,7 @@ const downloadFileSync = (url, dest) => {
         ],
         { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60000 },
       )
-    : spawnSync("curl", ["-fsSL", url, "-o", dest], {
+    : await run("curl", ["-fsSL", url, "-o", dest], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 60000,
@@ -220,9 +261,9 @@ const downloadFileSync = (url, dest) => {
  * Ensure bundled Python has venv/virtualenv available.
  * Embeddable Python omits ensurepip/venv — bootstrap via get-pip.py + virtualenv.
  */
-const ensureBundledPythonReady = (pythonExe) => {
+const ensureBundledPythonReady = async (pythonExe) => {
   // Quick check: does venv already work?
-  const check = spawnSync(pythonExe, ["-m", "venv", "--help"], {
+  const check = await run(pythonExe, ["-m", "venv", "--help"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -298,7 +339,7 @@ const ensureBundledPythonReady = (pythonExe) => {
 
   // 2) Try ensurepip (works in some embeddable builds with .pth renamed)
   logger.info("Trying ensurepip...");
-  const ensure = spawnSync(
+  const ensure = await run(
     pythonExe,
     ["-m", "ensurepip", "--upgrade", "--default-pip"],
     {
@@ -313,11 +354,11 @@ const ensureBundledPythonReady = (pythonExe) => {
     // 3) Fallback: download get-pip.py and run it
     logger.info("ensurepip not available, downloading get-pip.py...");
     const getPipPath = path.join(path.dirname(pythonExe), "get-pip.py");
-    if (!downloadFileSync("https://bootstrap.pypa.io/get-pip.py", getPipPath)) {
+    if (!(await downloadFile("https://bootstrap.pypa.io/get-pip.py", getPipPath))) {
       logger.warn("Failed to download get-pip.py (no internet?)");
       return false;
     }
-    const gpResult = spawnSync(pythonExe, [getPipPath], {
+    const gpResult = await run(pythonExe, [getPipPath], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
@@ -335,7 +376,7 @@ const ensureBundledPythonReady = (pythonExe) => {
 
   // 4) Install virtualenv package via pip
   logger.info("Installing virtualenv package...");
-  const installVenv = spawnSync(
+  const installVenv = await run(
     pythonExe,
     ["-m", "pip", "install", "virtualenv", "--quiet"],
     {
@@ -400,11 +441,16 @@ const fixVenvPaths = (venvDir, appRoot) => {
     const pythonExe = found.exe;
     const pythonDir = found.dir;
     let cfg = fs.readFileSync(pyvenvCfg, "utf8");
+    // `home` is the directory that holds the base interpreter (the venv launcher appends the exe
+    // name to it); it used to be set to the exe path itself, so the venv never worked. The prefix
+    // is that directory on Windows (embeddable Python) and its parent on macOS (python/bin/..).
+    const prefix =
+      path.basename(pythonDir) === "bin" ? path.dirname(pythonDir) : pythonDir;
     const replacements = {
-      home: pythonExe,
+      home: pythonDir,
       executable: pythonExe,
-      "base-prefix": pythonDir,
-      "base-exec-prefix": pythonDir,
+      "base-prefix": prefix,
+      "base-exec-prefix": prefix,
       "base-executable": pythonExe,
       command: `${pythonExe} -m virtualenv ${venvDir}`,
     };
@@ -489,7 +535,7 @@ const fixExeShebangs = (venvDir) => {
  * Copy pre-built virtualenv from resources to user data dir.
  * Used when app is packaged and dev ran build-venv.js.
  */
-const copyPrebuiltVenv = (appRoot) => {
+const copyPrebuiltVenv = async (appRoot) => {
   const { app } = require("electron");
   const resourcesVenvDir = path.join(
     app.isPackaged ? process.resourcesPath : appRoot,
@@ -512,11 +558,12 @@ const copyPrebuiltVenv = (appRoot) => {
     `Copying pre-built virtualenv from ${resourcesVenvDir} to ${targetDir}...`,
   );
   try {
-    if (fs.existsSync(targetDir)) {
-      fs.rmSync(targetDir, { recursive: true, force: true });
-    }
-    const { copyRecursive } = require("./utils");
-    copyRecursive(resourcesVenvDir, targetDir, { excludeDir: "__pycache__" });
+    await fs.promises.rm(targetDir, { recursive: true, force: true });
+    // Async copy: a synchronous copy of the whole venv also froze the app.
+    await fs.promises.cp(resourcesVenvDir, targetDir, {
+      recursive: true,
+      filter: (src) => path.basename(src) !== "__pycache__",
+    });
     logger.info(`Pre-built virtualenv deployed to ${targetDir}`);
 
     // Fix pyvenv.cfg paths to match new location (venv relocation issue)
@@ -537,13 +584,15 @@ const copyPrebuiltVenv = (appRoot) => {
 /**
  * Initialize/ensure virtualenv exists
  */
-const ensureVirtualEnv = (appRoot) => {
+const ensureVirtualEnvImpl = async (appRoot) => {
   const venvPaths = getVenvPaths(appRoot);
 
-  // Check if venv already exists and has a working python
+  // Check if venv already exists and has a working python. Fix pyvenv.cfg first: a venv shipped in
+  // the installer still points at the CI build machine and fails its check until it is rewritten.
   if (fs.existsSync(venvPaths.python)) {
+    fixVenvPaths(venvPaths.venvDir, appRoot);
     try {
-      const res = spawnSync(venvPaths.python, ["--version"], {
+      const res = await run(venvPaths.python, ["--version"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -562,11 +611,11 @@ const ensureVirtualEnv = (appRoot) => {
   }
 
   // Try to deploy pre-built virtualenv from installer resources
-  if (copyPrebuiltVenv(appRoot)) {
+  if (await copyPrebuiltVenv(appRoot)) {
     // Re-check after copy
     if (fs.existsSync(venvPaths.python)) {
       try {
-        const res = spawnSync(venvPaths.python, ["--version"], {
+        const res = await run(venvPaths.python, ["--version"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -604,7 +653,7 @@ const ensureVirtualEnv = (appRoot) => {
   const isBundled =
     bundledPythonDirRef && systemPython.startsWith(bundledPythonDirRef);
   if (isBundled) {
-    const ready = ensureBundledPythonReady(systemPython);
+    const ready = await ensureBundledPythonReady(systemPython);
     if (!ready) {
       return {
         success: false,
@@ -625,7 +674,7 @@ const ensureVirtualEnv = (appRoot) => {
   }
 
   // Try python -m venv first, fallback to python -m virtualenv
-  let result = spawnSync(systemPython, ["-m", "venv", venvPaths.venvDir], {
+  let result = await run(systemPython, ["-m", "venv", venvPaths.venvDir], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 30000,
@@ -633,7 +682,7 @@ const ensureVirtualEnv = (appRoot) => {
 
   if (result.status !== 0 && isBundled) {
     logger.info("venv failed, trying virtualenv package...");
-    result = spawnSync(systemPython, ["-m", "virtualenv", venvPaths.venvDir], {
+    result = await run(systemPython, ["-m", "virtualenv", venvPaths.venvDir], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
@@ -648,7 +697,7 @@ const ensureVirtualEnv = (appRoot) => {
 
   // Upgrade pip in venv
   logger.info("Upgrading pip in virtualenv...");
-  const pipResult = spawnSync(
+  const pipResult = await run(
     ...getPipSpawnArgs(venvPaths, ["install", "--upgrade", "pip", "--quiet"]),
     {
       encoding: "utf8",
@@ -661,7 +710,7 @@ const ensureVirtualEnv = (appRoot) => {
   }
 
   // Ensure setuptools and wheel are available
-  spawnSync(
+  await run(
     ...getPipSpawnArgs(venvPaths, [
       "install",
       "--upgrade",
@@ -681,6 +730,23 @@ const ensureVirtualEnv = (appRoot) => {
 
   logger.info(`Virtualenv created successfully at ${venvPaths.venvDir}`);
   return { success: true, venvPaths, alreadyExists: false };
+};
+
+// Every pip IPC handler calls ensureVirtualEnv; while a slow first-time setup is running, they all
+// share that one run instead of starting their own.
+let ensureVenvInFlight = null;
+const ensureVirtualEnv = (appRoot) => {
+  if (!ensureVenvInFlight) {
+    ensureVenvInFlight = ensureVirtualEnvImpl(appRoot)
+      .catch((e) => {
+        logger.error(`ensureVirtualEnv failed: ${(e && e.stack) || e}`);
+        return { success: false, error: (e && e.message) || String(e) };
+      })
+      .finally(() => {
+        ensureVenvInFlight = null;
+      });
+  }
+  return ensureVenvInFlight
 };
 
 /**
@@ -728,7 +794,7 @@ const installPackage = async (
     return { success: false, error: validationError };
   }
   return withPipLock(async () => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) {
       return venvResult;
     }
@@ -852,7 +918,7 @@ const uninstallPackage = async (event, { appRoot, packageName }) => {
   }
 
   return withPipLock(async () => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) {
       return venvResult;
     }
@@ -903,7 +969,7 @@ const uninstallPackage = async (event, { appRoot, packageName }) => {
  * List installed packages in virtualenv
  */
 const listPackages = async (event, { appRoot }) => {
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -939,7 +1005,7 @@ const listPackages = async (event, { appRoot }) => {
  * Check details of a specific package
  */
 const showPackage = async (event, { appRoot, packageName }) => {
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -968,7 +1034,7 @@ const showPackage = async (event, { appRoot, packageName }) => {
  * Get wheel cache status
  */
 const getWheelCacheInfo = async (event, { appRoot }) => {
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -1034,7 +1100,7 @@ const clearWheelCache = async (event, { appRoot }) => {
  * Execute a Python script using the virtualenv python (with all installed packages available)
  */
 const runInVenv = async (event, { appRoot, code }) => {
-  const venvResult = ensureVirtualEnv(appRoot);
+  const venvResult = await ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
@@ -1121,7 +1187,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   });
 
   ipcMain.handle("pip-ensure-venv", async () => {
-    const result = ensureVirtualEnv(appRoot);
+    const result = await ensureVirtualEnv(appRoot);
     return result;
   });
 
@@ -1136,7 +1202,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
 
   // M7: Pip config management
   ipcMain.handle("pip-set-config", async (event, { key, value }) => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
     const result = spawnSync(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "set", key, value]),
@@ -1154,7 +1220,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   });
 
   ipcMain.handle("pip-get-config", async (event, { key }) => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
     const result = spawnSync(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "get", key]),
@@ -1173,7 +1239,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   });
 
   ipcMain.handle("pip-list-config", async () => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
     const result = spawnSync(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "list"]),
@@ -1196,7 +1262,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
 
   // M9: Pip upgrade
   ipcMain.handle("pip-upgrade", async () => {
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
     const result = spawnSync(
       ...getPipSpawnArgs(venvResult.venvPaths, [
@@ -1225,7 +1291,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
     if (!query || query.trim().length === 0)
       return { success: false, error: "Search query is required" };
     // Try pip index versions first (pip >= 22.2)
-    const venvResult = ensureVirtualEnv(appRoot);
+    const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
     const result = spawnSync(
       ...getPipSpawnArgs(venvResult.venvPaths, [
