@@ -5,6 +5,7 @@ const path = require("path");
 const { createAuth } = require("../../src/main/auth");
 
 const DAY = 24 * 3600 * 1000;
+const KIT = { kit_external_id: "nomokit-x", kit_name: "X" };
 const FULL_USER = { id: 7, name: "Budi", email: "b@x.id", avatar: "a.png", password: "secret", role: "x" };
 
 describe("Main-process auth", () => {
@@ -36,7 +37,7 @@ describe("Main-process auth", () => {
         calls.push(["get", url, cfg]);
         if (url.endsWith("/api/user")) return { data: FULL_USER };
         if (url.endsWith("/api/me/kits"))
-          return { data: { is_active_subs: true, kit_external_id: ["k1"], access_until: "2026-12-01T00:00:00Z" } };
+          return { data: { is_active_subs: true, kit_external_id: [KIT], access_until: "2026-12-01T00:00:00Z" } };
         throw new Error("unexpected " + url);
       },
       ...over.http,
@@ -105,12 +106,12 @@ describe("Main-process auth", () => {
     seedSession();
     const { auth, calls } = make();
     const r = await auth.getKits();
-    assert.deepStrictEqual(r, { is_active_subs: true, kit_external_id: ["k1"] });
+    assert.deepStrictEqual(r, { is_active_subs: true, kit_external_id: [KIT] });
     assert.strictEqual(calls[0][2].headers.Authorization, "Bearer T1");
     const c = readJson(cacheFile());
     assert.deepStrictEqual(
       { k: c.kit_external_id, s: c.is_active_subs, a: c.access_until },
-      { k: ["k1"], s: true, a: "2026-12-01T00:00:00Z" },
+      { k: [KIT], s: true, a: "2026-12-01T00:00:00Z" },
     );
     assert.ok(c.fetched_at);
   });
@@ -129,25 +130,26 @@ describe("Main-process auth", () => {
     fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [], is_active_subs: true, access_until: "2026-11-10T00:00:00Z" }));
     let m = make({ http: offlineHttp });
     assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: false, kit_external_id: [] });
-    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: ["k9"], is_active_subs: false, access_until: null }));
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [KIT], is_active_subs: false, access_until: null }));
     m = make({ http: offlineHttp });
-    assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: true, kit_external_id: ["k9"] });
+    assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: true, kit_external_id: [KIT] });
   });
 
   it("getKits offline with no cache, or a non-401 http error, falls back to cache/empty", async () => {
     seedSession();
     let m = make({ http: offlineHttp });
     assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: false, kit_external_id: [] });
-    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: ["k2"], is_active_subs: false, access_until: null }));
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [KIT], is_active_subs: false, access_until: null }));
     m = make({ http: { get: async () => { throw httpErr(500); } } });
-    assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: true, kit_external_id: ["k2"] });
+    assert.deepStrictEqual(await m.auth.getKits(), { is_active_subs: true, kit_external_id: [KIT] });
     assert.ok(m.auth.getSession(), "session kept on 500");
   });
 
   it("getKits 401 clears session and cache", async () => {
     seedSession();
-    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: ["k2"], is_active_subs: true, access_until: null }));
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [KIT], is_active_subs: true, access_until: null }));
     const { auth, calls, socket } = make({ http: { get: async () => { throw httpErr(401); } } });
+    auth.start();
     let changes = 0;
     auth.onChange(() => changes++);
     assert.deepStrictEqual(await auth.getKits(), { is_active_subs: false, kit_external_id: [] });
@@ -155,7 +157,7 @@ describe("Main-process auth", () => {
     assert.ok(!fs.existsSync(cacheFile()));
     assert.ok(!calls.some((c) => c[1].endsWith("/api/logout")), "no API call");
     assert.strictEqual(changes, 1);
-    assert.ok(socket.events.some((e) => e[0] === "disconnect") || socket.events.length === 0);
+    assert.ok(socket.events.some((e) => e[0] === "disconnect"));
   });
 
   it("getKits without a session returns empty without calling the API", async () => {
@@ -166,7 +168,7 @@ describe("Main-process auth", () => {
 
   it("logout clears user.json and cache even when the API call fails", async () => {
     seedSession();
-    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: ["k"], is_active_subs: true, access_until: null }));
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [KIT], is_active_subs: true, access_until: null }));
     const { auth, socket } = make({ http: { post: async () => { throw netErr(); } } });
     socket.connected = true;
     let changes = 0;
@@ -178,6 +180,62 @@ describe("Main-process auth", () => {
     assert.deepStrictEqual(em.slice(1), ["logout", "T1"]);
     assert.ok(socket.events.some((e) => e[0] === "disconnect"));
     assert.strictEqual(changes, 1);
+  });
+
+  it("getKits offline at exactly access_until + 7 days is still active, one ms later is not", async () => {
+    seedSession();
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [], is_active_subs: true, access_until: "2026-11-16T00:00:00Z" }));
+    let m = make({ http: offlineHttp });
+    assert.strictEqual((await m.auth.getKits()).is_active_subs, true);
+    m = make({ http: offlineHttp, deps: { now: () => new Date("2026-11-23T00:00:00.001Z") } });
+    assert.strictEqual((await m.auth.getKits()).is_active_subs, false);
+  });
+
+  it("getKits offline with access_until but no kits is active within grace", async () => {
+    seedSession();
+    fs.writeFileSync(cacheFile(), JSON.stringify({ kit_external_id: [], is_active_subs: true, access_until: "2026-12-01T00:00:00Z" }));
+    const { auth } = make({ http: offlineHttp });
+    assert.deepStrictEqual(await auth.getKits(), { is_active_subs: true, kit_external_id: [] });
+  });
+
+  it("getKits ignores a 200 with a malformed body and keeps the cache", async () => {
+    seedSession();
+    const good = { kit_external_id: [KIT], is_active_subs: true, access_until: "2026-12-01T00:00:00Z" };
+    fs.writeFileSync(cacheFile(), JSON.stringify(good));
+    const { auth } = make({ http: { get: async () => ({ status: 200, data: "<html>portal</html>" }) } });
+    assert.deepStrictEqual(await auth.getKits(), { is_active_subs: true, kit_external_id: [KIT] });
+    assert.deepStrictEqual(readJson(cacheFile()), good);
+  });
+
+  it("a late 401 for an old token does not clear a newer login", async () => {
+    seedSession();
+    const { auth } = make({
+      http: {
+        get: async () => {
+          fs.writeFileSync(userFile(), JSON.stringify({ user: FULL_USER, token: "B" }));
+          throw httpErr(401);
+        },
+      },
+    });
+    await auth.getKits();
+    assert.strictEqual(auth.getSession().token, "B");
+  });
+
+  it("logout clears locally even when the API promise never resolves", async () => {
+    seedSession();
+    fs.writeFileSync(cacheFile(), "{}");
+    const { auth } = make({ http: { post: () => new Promise(() => {}) } });
+    await auth.logout();
+    assert.strictEqual(auth.getSession(), null);
+    assert.ok(!fs.existsSync(cacheFile()));
+  });
+
+  it("a cache write failure still returns the fresh server answer", async () => {
+    seedSession();
+    fs.mkdirSync(cacheFile()); // rename onto a directory fails
+    const { auth } = make();
+    assert.deepStrictEqual(await auth.getKits(), { is_active_subs: true, kit_external_id: [KIT] });
+    assert.ok(!fs.readdirSync(path.join(dir, "data")).some((f) => f.endsWith(".tmp")));
   });
 
   it("start connects the socket only when logged in", () => {

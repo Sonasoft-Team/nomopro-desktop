@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const BASE_URL = "https://nomo-kit.com";
+const HTTP_TIMEOUT_MS = 10000;
 const GRACE_MS = 7 * 24 * 3600 * 1000;
 const EMPTY_KITS = () => ({ is_active_subs: false, kit_external_id: [] });
 
@@ -33,8 +34,17 @@ function createAuth({
   const writeJsonAtomic = (file, data) => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data));
-    fs.renameSync(tmp, file);
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(data));
+      fs.renameSync(tmp, file);
+    } catch (e) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch (_) {
+        /* ignore */
+      }
+      throw e;
+    }
   };
 
   const removeFile = (file) => {
@@ -71,11 +81,19 @@ function createAuth({
     return s;
   };
 
-  const authHeaders = (token) => ({ headers: { Authorization: "Bearer " + token } });
+  // Callers must pass an http client; every request here sets a 10 s timeout.
+  const authHeaders = (token) => ({
+    headers: { Authorization: "Bearer " + token },
+    timeout: HTTP_TIMEOUT_MS,
+  });
 
-  const clearLocal = () => {
+  const clearFiles = () => {
     removeFile(userPath);
     removeFile(cachePath);
+  };
+
+  const clearLocal = () => {
+    clearFiles();
     if (socket && socket.connected) socket.disconnect();
   };
 
@@ -108,22 +126,21 @@ function createAuth({
 
   async function logout() {
     const stored = readStored();
-    if (stored) {
-      try {
-        await http.post(`${BASE_URL}/api/logout`, null, authHeaders(stored.token));
-      } catch (e) {
-        logger.warn("Logout request failed, continuing: " + e.message);
-      }
-      try {
-        const s = getSocket();
-        if (s.connected) s.emit("logout", stored.token);
-        s.disconnect();
-      } catch (e) {
-        logger.warn("Socket logout failed: " + e.message);
-      }
-    }
-    clearLocal();
+    // Clear local state first: a slow or dead network must never block it.
+    clearFiles();
     emitChange();
+    if (!stored) return;
+    try {
+      const s = getSocket();
+      if (s.connected) s.emit("logout", stored.token);
+      s.disconnect();
+    } catch (e) {
+      logger.warn("Socket logout failed: " + e.message);
+    }
+    // Best effort, not awaited.
+    Promise.resolve()
+      .then(() => http.post(`${BASE_URL}/api/logout`, null, authHeaders(stored.token)))
+      .catch((e) => logger.warn("Logout request failed, continuing: " + e.message));
   }
 
   const fromCache = () => {
@@ -141,25 +158,39 @@ function createAuth({
   async function getKits() {
     const stored = readStored();
     if (!stored) return EMPTY_KITS();
+    let data;
     try {
       const res = await http.get(`${BASE_URL}/api/me/kits`, authHeaders(stored.token));
-      const { is_active_subs, kit_external_id, access_until } = res.data;
+      data = res && res.data;
+    } catch (e) {
+      if (e && e.response && e.response.status === 401) {
+        // Only if the token used for this request is still the current one.
+        const cur = readStored();
+        if (cur && cur.token === stored.token) {
+          clearLocal();
+          emitChange();
+        }
+        return EMPTY_KITS();
+      }
+      // No response (offline) or any other HTTP error: use the cache.
+      return fromCache();
+    }
+    // A captive portal / proxy can answer 200 with HTML: don't trust it.
+    if (!data || !Array.isArray(data.kit_external_id) || typeof data.is_active_subs !== "boolean") {
+      return fromCache();
+    }
+    const { is_active_subs, kit_external_id, access_until } = data;
+    try {
       writeJsonAtomic(cachePath, {
         kit_external_id,
         is_active_subs,
         access_until: access_until ?? null,
         fetched_at: now().toISOString(),
       });
-      return { is_active_subs, kit_external_id };
     } catch (e) {
-      if (e && e.response && e.response.status === 401) {
-        clearLocal();
-        emitChange();
-        return EMPTY_KITS();
-      }
-      // No response (offline) or any other HTTP error: use the cache.
-      return fromCache();
+      logger.error("Failed to write kits cache: " + e.message);
     }
+    return { is_active_subs, kit_external_id };
   }
 
   function onChange(cb) {
