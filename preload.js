@@ -173,7 +173,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getSession: () => ipcRenderer.invoke("auth:get-session"),
     login: async () => {
       const res = await ipcRenderer.invoke("auth:login");
-      if (res && res.ok) return res.session;
+      if (res && res.ok) return res.session; // codes: cancelled | network | forbidden | error
       throw Object.assign(new Error((res && res.message) || "Login failed"), {
         code: (res && res.code) || "error",
       });

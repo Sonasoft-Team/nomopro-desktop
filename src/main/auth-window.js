@@ -53,8 +53,18 @@ function openLoginWindow(parentWin) {
   const promise = new Promise((resolve, reject) => {
     let settled = false;
 
+    const fail = (code, message) => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(new Error(message), { code }));
+      if (!win.isDestroyed()) win.close();
+    };
+
     const onComplete = (event, payload) => {
       if (event.sender !== wc || settled) return;
+      const frame = event.senderFrame;
+      if (!frame || frame !== wc.mainFrame) return;
+      if (!isAllowedLoginUrl(frame.url)) return;
       if (!payload || typeof payload.token !== "string" || !payload.token) return;
       settled = true;
       resolve({ token: payload.token, user: payload.user });
@@ -62,7 +72,11 @@ function openLoginWindow(parentWin) {
     };
     ipcMain.on("auth:complete", onComplete);
 
-    win.once("ready-to-show", () => win.show());
+    const showOnce = () => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show();
+    };
+    win.once("ready-to-show", showOnce);
+    wc.on("did-finish-load", showOnce);
     win.on("closed", () => {
       ipcMain.removeListener("auth:complete", onComplete);
       current = null;
@@ -73,26 +87,36 @@ function openLoginWindow(parentWin) {
     });
 
     const external = (url) => {
-      if (isExternalOpenable(url)) shell.openExternal(url);
+      if (isExternalOpenable(url)) {
+        Promise.resolve(shell.openExternal(url)).catch(() => {});
+      }
     };
     wc.setWindowOpenHandler(({ url }) => {
       external(url);
       return { action: "deny" };
     });
-    wc.on("will-navigate", (event, url) => {
+    const guard = (event, url) => {
       if (!isAllowedLoginUrl(url)) {
         event.preventDefault();
         external(url);
       }
-    });
+    };
+    wc.on("will-navigate", guard);
+    wc.on("will-redirect", guard);
 
-    win.loadURL(LOGIN_URL).catch(() => {
-      /* load failure: user can close the window to cancel */
+    wc.on("did-fail-load", (event, code, desc, url, isMainFrame) => {
+      if (code === -3 || !isMainFrame) return; // -3 = aborted (e.g. our own preventDefault)
+      fail("network", `Login page failed to load: ${desc}`);
     });
+    win.loadURL(LOGIN_URL).catch((e) => fail("network", e.message));
   });
 
   current = { win, promise };
   return promise;
 }
 
-module.exports = { openLoginWindow, isAllowedLoginUrl, isExternalOpenable, LOGIN_URL };
+function getLoginWebContents() {
+  return current && !current.win.isDestroyed() ? current.win.webContents : null;
+}
+
+module.exports = { openLoginWindow, getLoginWebContents, isAllowedLoginUrl, isExternalOpenable, LOGIN_URL };
