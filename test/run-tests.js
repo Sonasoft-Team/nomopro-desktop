@@ -199,7 +199,7 @@ console.log("\n--- Auth unit tests ---");
 if (fs.existsSync(MOCHA)) {
   const authResult = spawnSync(
     process.execPath,
-    [MOCHA, path.join(__dirname, "unit", "auth.test.js")],
+    [MOCHA, path.join(__dirname, "unit", "auth.test.js"), path.join(__dirname, "unit", "auth-window.test.js")],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: ROOT },
   );
   if (authResult.status === 0) {
@@ -347,6 +347,28 @@ try {
   console.log("  ✓ All pip source contracts verified");
 } catch (e) {
   console.error("  ✗ Pip contract validation failed:", e.message);
+  exitCode = 1;
+}
+
+// Login pop-up + electronAPI.auth static checks
+console.log("\n--- Login window / auth bridge checks ---");
+try {
+  const assert = require("assert");
+  const rd = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
+  const pre = rd("preload.js");
+  const authBlock = pre.slice(pre.indexOf("auth: {"));
+  for (const m of ["getSession", "login", "logout", "getKits", "onChange"]) {
+    assert.ok(authBlock.includes(m + ":"), "preload.js electronAPI.auth must expose " + m);
+  }
+  assert.ok(pre.includes("auth:changed"), "preload.js must listen to auth:changed");
+  assert.ok(rd("preload-auth.js").includes("'https://nomo-kit.com'") || rd("preload-auth.js").includes('"https://nomo-kit.com"'), "preload-auth.js must check the nomo-kit.com origin");
+  const win = rd("src/main/auth-window.js");
+  assert.ok(win.includes("setWindowOpenHandler"), "auth-window.js must use setWindowOpenHandler");
+  assert.ok(win.includes("contextIsolation: true"), "auth-window.js must set contextIsolation: true");
+  assert.equal(typeof require("../src/main/auth-ipc").registerAuthIpc, "function");
+  console.log("  ✓ Login window / auth bridge checks passed");
+} catch (e) {
+  console.error("  ✗ Login window / auth bridge checks failed:", e.message);
   exitCode = 1;
 }
 

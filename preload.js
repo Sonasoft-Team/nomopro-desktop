@@ -168,6 +168,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getUserData: () => {
     ipcRenderer.send("getUserData", "");
   },
+  // Optional desktop login (main-process session)
+  auth: {
+    getSession: () => ipcRenderer.invoke("auth:get-session"),
+    login: async () => {
+      const res = await ipcRenderer.invoke("auth:login");
+      if (res && res.ok) return res.session;
+      throw Object.assign(new Error((res && res.message) || "Login failed"), {
+        code: (res && res.code) || "error",
+      });
+    },
+    logout: () => ipcRenderer.invoke("auth:logout"),
+    getKits: () => ipcRenderer.invoke("auth:get-kits"),
+    onChange: (cb) => {
+      const wrapper = (event, session) => cb(session);
+      ipcRenderer.on("auth:changed", wrapper);
+      return () => ipcRenderer.removeListener("auth:changed", wrapper);
+    },
+  },
   // Channel subscription for main->renderer events
   on: (channel, func) => {
     // Store the wrapper so removeListener can find it
