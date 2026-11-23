@@ -125,24 +125,43 @@ function createAuth({
     emitChange();
   }
 
+  const NETWORK_CODES = new Set(["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "EAI_AGAIN"]);
+  // No HTTP response at all: offline, DNS, timeout.
+  const isNetworkError = (e) =>
+    !!e && !e.response && (NETWORK_CODES.has(e.code) || e.isAxiosError === true);
+
   async function login() {
     const payload = await openLoginWindow();
     if (!payload || !payload.token) {
       throw Object.assign(new Error("Login cancelled"), { code: "cancelled" });
     }
-    await completeLogin(payload);
+    try {
+      await completeLogin(payload);
+    } catch (e) {
+      if (isNetworkError(e)) {
+        throw Object.assign(new Error("Network error"), { code: "network" });
+      }
+      throw e;
+    }
     return getSession();
   }
 
-  async function logout() {
+  // local: true is for a server-initiated logout (another device took the
+  // account): clear and disconnect, but tell neither the socket nor the API.
+  async function logout({ local = false } = {}) {
     const stored = readStored();
     // Clear local state first: a slow or dead network must never block it.
     clearFiles();
     emitChange();
+    if (local) {
+      if (socket) socket.disconnect();
+      return;
+    }
     if (!stored) return;
     try {
       const s = getSocket();
-      if (s.connected) s.emit("logout", stored.token);
+      // The server expects the whole stored object ({user, token}), as the old app sent.
+      if (s.connected) s.emit("logout", stored);
       s.disconnect();
     } catch (e) {
       logger.warn("Socket logout failed: " + e.message);
@@ -216,11 +235,15 @@ function createAuth({
     return () => socketListeners.delete(cb);
   }
 
+  function disconnectSocket() {
+    if (socket) socket.disconnect();
+  }
+
   function start() {
     if (readStored()) connectSocket();
   }
 
-  return { getSession, completeLogin, login, logout, getKits, onChange, onSocket, start };
+  return { getSession, completeLogin, login, logout, getKits, onChange, onSocket, disconnectSocket, start };
 }
 
 module.exports = { createAuth };

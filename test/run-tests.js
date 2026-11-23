@@ -199,7 +199,7 @@ console.log("\n--- Auth unit tests ---");
 if (fs.existsSync(MOCHA)) {
   const authResult = spawnSync(
     process.execPath,
-    [MOCHA, path.join(__dirname, "unit", "auth.test.js"), path.join(__dirname, "unit", "auth-window.test.js"), path.join(__dirname, "unit", "auth-ipc.test.js")],
+    [MOCHA, path.join(__dirname, "unit", "auth.test.js"), path.join(__dirname, "unit", "auth-window.test.js"), path.join(__dirname, "unit", "auth-ipc.test.js"), path.join(__dirname, "unit", "socket.test.js")],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: ROOT },
   );
   if (authResult.status === 0) {

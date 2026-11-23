@@ -319,14 +319,14 @@ function setMenu({ win, appRoot, app }) {
                 try {
                   await getAuth().login();
                 } catch (e) {
-                  if (e && e.code === "network") {
-                    dialog.showErrorBox(
-                      "Masuk",
-                      "Tidak dapat terhubung ke nomo-kit.com. Periksa koneksi internet lalu coba lagi.",
-                    );
-                  } else if (!e || e.code !== "cancelled") {
-                    logger.warn("Login from menu failed: " + (e && e.message));
-                  }
+                  if (e && e.code === "cancelled") return;
+                  logger.warn("Login from menu failed: " + (e && e.message));
+                  dialog.showErrorBox(
+                    "Masuk",
+                    e && e.code === "network"
+                      ? "Tidak dapat terhubung ke nomo-kit.com. Periksa koneksi internet lalu coba lagi."
+                      : "Gagal masuk. Silakan coba lagi.",
+                  );
                 }
               },
             },

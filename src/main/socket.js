@@ -11,7 +11,7 @@ function initSocket({ auth = getAuth(), showError = dialog.showErrorBox } = {}) 
       try {
         const session = auth.getSession();
         if (!session || data !== session.token) return;
-        auth.logout(); // local logout first, no relaunch, no navigation
+        auth.logout({ local: true }); // server already dropped us: no emit, no API call
         showError(
           "Error: ",
           "Seseorang telah login dengan akun anda, silahkan login kembali",

@@ -177,7 +177,7 @@ describe("Main-process auth", () => {
     assert.strictEqual(auth.getSession(), null);
     assert.ok(!fs.existsSync(cacheFile()));
     const em = socket.events.find((e) => e[0] === "emit");
-    assert.deepStrictEqual(em.slice(1), ["logout", "T1"]);
+    assert.deepStrictEqual(em.slice(1), ["logout", { user: FULL_USER, token: "T1" }]);
     assert.ok(socket.events.some((e) => e[0] === "disconnect"));
     assert.strictEqual(changes, 1);
   });
@@ -270,5 +270,40 @@ describe("Main-process auth", () => {
     await auth.logout();
     await auth.completeLogin({ token: "T1" });
     assert.strictEqual(early.length, 1); // same socket reused, not announced twice
+  });
+
+  it("logout({local:true}) clears and disconnects but makes no API call and no socket emit", async () => {
+    seedSession();
+    const { auth, socket, calls } = make();
+    socket.connected = true;
+    auth.start();
+    let changes = 0;
+    auth.onChange(() => changes++);
+    await auth.logout({ local: true });
+    assert.strictEqual(auth.getSession(), null);
+    assert.ok(!fs.existsSync(userFile()));
+    assert.strictEqual(changes, 1);
+    assert.ok(!socket.events.some((e) => e[0] === "emit"), "no socket logout emit");
+    assert.ok(socket.events.some((e) => e[0] === "disconnect"));
+    await new Promise((r) => setImmediate(r));
+    assert.ok(!calls.some((c) => c[1] && c[1].endsWith("/api/logout")), "no /api/logout");
+  });
+
+  it("login maps a response-less axios error from completeLogin to code network", async () => {
+    const { auth } = make({
+      http: { post: async () => { throw Object.assign(new Error("Network Error"), { isAxiosError: true, code: "ERR_NETWORK" }); } },
+    });
+    await assert.rejects(auth.login(), (e) => e.code === "network");
+    const other = make({ http: { post: async () => { throw httpErr(500); } } });
+    await assert.rejects(other.auth.login(), (e) => e.code !== "network");
+  });
+
+  it("disconnectSocket disconnects an existing socket and is a no-op without one", async () => {
+    const { auth, socket } = make();
+    auth.disconnectSocket();
+    assert.strictEqual(socket.events.length, 0);
+    await auth.completeLogin({ token: "T1" });
+    auth.disconnectSocket();
+    assert.strictEqual(socket.connected, false);
   });
 });

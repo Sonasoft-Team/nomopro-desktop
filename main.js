@@ -609,7 +609,12 @@ const cleanupBeforeInstallUpdate = async () => {
   // Notify guarded update windows to bypass close prevention logic.
   app.emit("nomokit-force-close-update-windows");
 
-  // The auth socket is torn down with the process; nothing to close here.
+  // Stop the auth-owned socket so it doesn't keep reconnecting during quitAndInstall.
+  try {
+    require("./src/main/auth-instance").getAuth().disconnectSocket();
+  } catch (e) {
+    logger.warn("Update cleanup socket error: " + e.message);
+  }
 
   // Stop link server if active.
   try {

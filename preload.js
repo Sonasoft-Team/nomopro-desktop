@@ -49,16 +49,11 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 window.addEventListener("DOMContentLoaded", async () => {
-  const btn = document.getElementById("login");
-  const error = document.getElementById("error");
   const openComunity = document.querySelector('[aria-label="Open Community"]');
   const openTutorial = document.querySelector(
     '[aria-label="Nomokit Tutorials"]',
   );
 
-  if (error !== null) {
-    error.style.display = "none";
-  }
   if (openComunity !== null) {
     openComunity.addEventListener("click", () => {
       shell.openExternal("https://nomo-kit.com/community");
@@ -69,63 +64,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     openTutorial.addEventListener("click", () => {
       shell.openExternal("https://nomo-kit.com/tutorial");
     });
-  }
-  if (error !== null) {
-    error.style.display = "none";
-  }
-
-  const forgot = document.getElementById("forgot");
-  if (forgot !== null) {
-    forgot.addEventListener("click", (e) => {
-      e.preventDefault();
-      shell.openExternal("https://nomo-kit.com/password/reset");
-    });
-  }
-
-  const email = document.getElementById("email");
-  const password = document.getElementById("password");
-
-  if (password) {
-    password.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") {
-        login();
-      }
-    });
-  }
-  function login() {
-    if (!email || !password) return;
-    if (email.value !== "" && password.value !== "") {
-      ipcRenderer.send("login", {
-        email: email.value,
-        password: password.value,
-      });
-    } else {
-      email.classList.add("is-invalid");
-      password.classList.add("is-invalid");
-    }
-  }
-
-  if (error !== null && btn !== null && email !== null && password !== null) {
-    btn.addEventListener("click", async () => {
-      login();
-    });
-    email.addEventListener("keyup", (e) => {
-      error.style.display = "none";
-      email.classList.remove("is-invalid");
-      password.classList.remove("is-invalid");
-    });
-    password.addEventListener("keyup", () => {
-      error.style.display = "none";
-      email.classList.remove("is-invalid");
-      password.classList.remove("is-invalid");
-    });
-    // Ensure only one login-fail listener
-    const loginFailHandler = (event, arg) => {
-      error.style.display = "block";
-      error.textContent = "Email atau password salah";
-    };
-    ipcRenderer.removeListener("login-fail", loginFailHandler);
-    ipcRenderer.on("login-fail", loginFailHandler);
   }
 
   // One download-progress listener. preload re-runs on every win.loadFile
