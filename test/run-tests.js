@@ -194,6 +194,29 @@ if (fs.existsSync(MOCHA)) {
   console.log("  ⚠ mocha not found, skipping usage ping tests");
 }
 
+// Unit tests: main-process auth
+console.log("\n--- Auth unit tests ---");
+if (fs.existsSync(MOCHA)) {
+  const authResult = spawnSync(
+    process.execPath,
+    [MOCHA, path.join(__dirname, "unit", "auth.test.js")],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: ROOT },
+  );
+  if (authResult.status === 0) {
+    console.log(authResult.stdout
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => "  " + l)
+      .join("\n"));
+  } else {
+    console.error(authResult.stdout);
+    console.error(authResult.stderr);
+    exitCode = 1;
+  }
+} else {
+  console.log("  ⚠ mocha not found, skipping auth tests");
+}
+
 // 4. Unit tests: Pip manager
 console.log("\n--- Pip manager unit tests ---");
 if (fs.existsSync(MOCHA)) {
