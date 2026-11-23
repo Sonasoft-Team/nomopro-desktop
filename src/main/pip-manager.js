@@ -178,7 +178,9 @@ const findSystemPython = (appRoot) => {
     const bundled =
       process.platform === "win32"
         ? path.join(dir, "python.exe")
-        : path.join(dir, "bin", "python3");
+        : [path.join(dir, "install", "bin", "python3"), path.join(dir, "bin", "python3")].find(
+            (p) => fs.existsSync(p),
+          ) || path.join(dir, "bin", "python3");
     if (!fs.existsSync(bundled)) continue;
 
     try {
@@ -410,6 +412,8 @@ const findBundledPythonExe = (appRoot) => {
   // appRoot/../python/ (alternative layout)
   const candidates = [
     path.join(process.resourcesPath, "python", exeName),
+    // macOS payload is python-build-standalone: python/install/bin/python3
+    path.join(process.resourcesPath, "python", "install", binExe),
     path.join(process.resourcesPath, "python", binExe),
     path.join(appRoot, "python", exeName),
     path.join(appRoot, "python", binExe),
@@ -592,7 +596,7 @@ const ensureVirtualEnvImpl = async (appRoot) => {
   if (fs.existsSync(venvPaths.python)) {
     fixVenvPaths(venvPaths.venvDir, appRoot);
     try {
-      const res = await run(venvPaths.python, ["--version"], {
+      const res = await run(venvPaths.python, ["-c", "import encodings"], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -615,7 +619,7 @@ const ensureVirtualEnvImpl = async (appRoot) => {
     // Re-check after copy
     if (fs.existsSync(venvPaths.python)) {
       try {
-        const res = await run(venvPaths.python, ["--version"], {
+        const res = await run(venvPaths.python, ["-c", "import encodings"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -925,7 +929,7 @@ const uninstallPackage = async (event, { appRoot, packageName }) => {
 
     sendProgress(event, { type: "uninstall-start", package: packageName });
 
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, [
         "uninstall",
         "-y",
@@ -974,7 +978,7 @@ const listPackages = async (event, { appRoot }) => {
     return venvResult;
   }
 
-  const result = spawnSync(
+  const result = await run(
     ...getPipSpawnArgs(venvResult.venvPaths, ["list", "--format=json"]),
     {
       encoding: "utf8",
@@ -1010,7 +1014,7 @@ const showPackage = async (event, { appRoot, packageName }) => {
     return venvResult;
   }
 
-  const result = spawnSync(
+  const result = await run(
     ...getPipSpawnArgs(venvResult.venvPaths, ["show", packageName]),
     {
       encoding: "utf8",
@@ -1039,7 +1043,7 @@ const getWheelCacheInfo = async (event, { appRoot }) => {
     return venvResult;
   }
 
-  const result = spawnSync(
+  const result = await run(
     venvResult.venvPaths.python,
     ["-c", "import pip._internal.locations as loc; print(loc.USER_CACHE_DIR)"],
     {
@@ -1204,7 +1208,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   ipcMain.handle("pip-set-config", async (event, { key, value }) => {
     const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "set", key, value]),
       {
         encoding: "utf8",
@@ -1222,7 +1226,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   ipcMain.handle("pip-get-config", async (event, { key }) => {
     const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "get", key]),
       {
         encoding: "utf8",
@@ -1241,7 +1245,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   ipcMain.handle("pip-list-config", async () => {
     const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, ["config", "list"]),
       {
         encoding: "utf8",
@@ -1264,7 +1268,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
   ipcMain.handle("pip-upgrade", async () => {
     const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, [
         "install",
         "--upgrade",
@@ -1293,7 +1297,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
     // Try pip index versions first (pip >= 22.2)
     const venvResult = await ensureVirtualEnv(appRoot);
     if (!venvResult.success) return venvResult;
-    const result = spawnSync(
+    const result = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, [
         "index",
         "versions",
@@ -1329,7 +1333,7 @@ const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
       };
     }
     // Fallback: simple pip search (deprecated but may still work)
-    const fallbackResult = spawnSync(
+    const fallbackResult = await run(
       ...getPipSpawnArgs(venvResult.venvPaths, ["search", query.trim()]),
       {
         encoding: "utf8",

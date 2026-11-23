@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { EventEmitter } = require("events");
 const { Menu, dialog, shell } = require("electron");
-const { execSync } = require("child_process");
+const { execFile } = require("child_process");
 const logger = require("./logger");
 
 const { runArduinoCoreAction } = require("./arduino-updater");
@@ -24,19 +24,40 @@ function getArduinoConfig(appRoot) {
   return path.join(getArduinoDir(appRoot), "arduino-cli.yaml");
 }
 
-function getInstalledCores(appRoot) {
-  const cli = getArduinoCli(appRoot);
-  const cfg = getArduinoConfig(appRoot);
-  const dir = getArduinoDir(appRoot);
-  try {
-    const out = execSync(
-      `"${cli}" core list --format json --config-file "${cfg}"`,
-      { cwd: dir, encoding: "utf8", timeout: 15000 },
-    ).trim();
-    return JSON.parse(out).platforms;
-  } catch {
-    return [];
+// `arduino-cli core list` used to run with execSync every time the menu was built, blocking the
+// main process (~0.2 s on a fast Mac, much more on Windows) at startup and after login. Now the menu
+// is built from the last known list at once and rebuilt when a background refresh finishes.
+let coresCache = null; // null = not loaded yet (or invalidated)
+let coresLoading = null;
+
+function loadInstalledCores(appRoot) {
+  if (!coresLoading) {
+    coresLoading = new Promise((resolve) => {
+      execFile(
+        getArduinoCli(appRoot),
+        ["core", "list", "--format", "json", "--config-file", getArduinoConfig(appRoot)],
+        { cwd: getArduinoDir(appRoot), encoding: "utf8", timeout: 15000, windowsHide: true },
+        (err, out) => {
+          let list = [];
+          if (!err) {
+            try {
+              list = JSON.parse(String(out).trim()).platforms || [];
+            } catch {
+              list = [];
+            }
+          }
+          coresCache = list;
+          coresLoading = null;
+          resolve(list);
+        },
+      );
+    });
   }
+  return coresLoading;
+}
+
+function getInstalledCores() {
+  return coresCache || [];
 }
 
 /**
@@ -70,17 +91,20 @@ function isBuiltInCore(coreId) {
 function arduinoCoreAction(appRoot, action, coreId, version) {
   const emitter = new EventEmitter();
   emitter.on("complete", () => {
+    coresCache = null; // installed cores changed: refresh
     if (_menuState) setMenu(_menuState);
   });
   emitter.on("error", () => {
+    coresCache = null;
     if (_menuState) setMenu(_menuState);
   });
   showArduinoUpdateWindow({ emitter });
   runArduinoCoreAction({ appRoot, coreId, action, version, emitter });
 }
 
-function showInstalledCores(appRoot) {
-  const cores = getInstalledCores(appRoot);
+async function showInstalledCores(appRoot) {
+  coresCache = null;
+  const cores = await loadInstalledCores(appRoot);
   const win = require("electron").BrowserWindow.getFocusedWindow();
   console.log("Installed cores:", cores);
   if (cores.length === 0) {
@@ -119,7 +143,12 @@ function setMenu({ win, appRoot, app }) {
     label: `${index + 1}. ${item}`,
   }));
 
-  const installedCores = getInstalledCores(appRoot);
+  const installedCores = getInstalledCores();
+  if (coresCache === null) {
+    loadInstalledCores(appRoot).then(() => {
+      if (_menuState) setMenu(_menuState);
+    });
+  }
   const installedIds = installedCores.map((c) => c.id);
 
   // Install submenu: only optional cores (exclude built-in)

@@ -95,6 +95,9 @@ const getPythonCandidates = () => {
         if (fs.existsSync(pexe)) candidates.push(pexe);
         if (fs.existsSync(pexeAlt)) candidates.push(pexeAlt);
       } else {
+        // macOS payload is python-build-standalone: python/install/bin/python3.
+        const pyInstall = path.join(resourcesPython, "install", "bin", "python3");
+        if (fs.existsSync(pyInstall)) candidates.push(pyInstall);
         const pyBin = path.join(resourcesPython, "bin", "python3");
         const pyBinAlt = path.join(resourcesPython, "bin", "python");
         const pyRoot = path.join(resourcesPython, "python3");
@@ -214,7 +217,13 @@ const createWindow = () => {
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomokit-Desktop" + " - " + "v" + app.getVersion(),
+    // Matches the loading page, so there is no white flash before it paints.
+    backgroundColor: "#f5f7fb",
   });
+  // Show a loading screen at once. The setup below (IPC handlers, menu, link server with its native
+  // modules) runs on this thread and takes ~0.5 s on a fast Mac, more on Windows; doing it first left
+  // a blank, unresponsive window. It now starts after the loading page has painted.
+  win.loadFile(path.join(__dirname, "src/loading/index.html")).catch(() => {});
   // Renderer crash / freeze logging — otherwise the user just sees a dead
   // window and the log says nothing.
   win.webContents.on("render-process-gone", (event, details) => {
@@ -281,45 +290,55 @@ const createWindow = () => {
       }, 1000 * initialLoadRetries);
     },
   );
-  // register ipc and socket handlers from helper modules
-  const { registerIpc } = require("./src/main/ipc");
-  const { initSocket } = require("./src/main/socket");
-  const { registerPipHandlers } = require("./src/main/pip-manager");
-  const { registerProjectDepsHandlers } = require("./src/main/project-deps");
-  const { registerSafeInstallHandlers } = require("./src/main/safe-install");
-  const {
-    registerDiagnosticHandlers,
-  } = require("./src/main/diagnostic-bundle");
-  const { registerOfflineCacheHandlers } = require("./src/main/offline-cache");
-  const { registerRecoveryHandlers } = require("./src/main/recovery-mode");
-  registerIpc({ win, appRoot, socket });
-  const bundledPythonDir = path.join(
-    app.isPackaged ? process.resourcesPath : __dirname,
-    "python",
-  );
-  registerPipHandlers({ appRoot, win, bundledPythonDir });
-  registerProjectDepsHandlers({ appRoot });
-  registerSafeInstallHandlers();
-  registerDiagnosticHandlers({ appRoot });
-  registerOfflineCacheHandlers({ appRoot });
-  registerRecoveryHandlers({ appRoot });
-  initSocket({ socket, appRoot, win });
+  const finishSetup = () => {
+    // register ipc and socket handlers from helper modules
+    const { registerIpc } = require("./src/main/ipc");
+    const { initSocket } = require("./src/main/socket");
+    const { registerPipHandlers } = require("./src/main/pip-manager");
+    const { registerProjectDepsHandlers } = require("./src/main/project-deps");
+    const { registerSafeInstallHandlers } = require("./src/main/safe-install");
+    const {
+      registerDiagnosticHandlers,
+    } = require("./src/main/diagnostic-bundle");
+    const { registerOfflineCacheHandlers } = require("./src/main/offline-cache");
+    const { registerRecoveryHandlers } = require("./src/main/recovery-mode");
+    registerIpc({ win, appRoot, socket });
+    const bundledPythonDir = path.join(
+      app.isPackaged ? process.resourcesPath : __dirname,
+      "python",
+    );
+    registerPipHandlers({ appRoot, win, bundledPythonDir });
+    registerProjectDepsHandlers({ appRoot });
+    registerSafeInstallHandlers();
+    registerDiagnosticHandlers({ appRoot });
+    registerOfflineCacheHandlers({ appRoot });
+    registerRecoveryHandlers({ appRoot });
+    initSocket({ socket, appRoot, win });
 
-  // Set application menu (must be called after window is ready)
-  _setMenu({ win, appRoot, app });
-  //  START: Link server (before the initial page load — the GUI URL is
-  // served by this server, see loadInitialPage above).
-  // The require is inside the try too: loading the link server pulls in native modules (noble for
-  // BLE on Windows). If one fails to load, the app must still show its first page; before 4.0.5 a
-  // throw here skipped loadInitialPage() and left a blank window.
-  try {
-    const { startLink: _startLink } = require("./src/main/link");
-    link = _startLink({ win });
-  } catch (err) {
-    logger.warn("Link server failed to start: " + (err.message || err));
-    link = null;
-  }
-  loadInitialPage();
+    // Set application menu (must be called after window is ready)
+    _setMenu({ win, appRoot, app });
+    //  START: Link server (before the initial page load — the GUI URL is
+    // served by this server, see loadInitialPage above).
+    // The require is inside the try too: loading the link server pulls in native modules (noble for
+    // BLE on Windows). If one fails to load, the app must still show its first page; before 4.0.5 a
+    // throw here skipped loadInitialPage() and left a blank window.
+    try {
+      const { startLink: _startLink } = require("./src/main/link");
+      link = _startLink({ win });
+    } catch (err) {
+      logger.warn("Link server failed to start: " + (err.message || err));
+      link = null;
+    }
+    loadInitialPage();
+  };
+  let setupStarted = false;
+  const startSetup = () => {
+    if (setupStarted || !win || win.isDestroyed()) return;
+    setupStarted = true;
+    finishSetup();
+  };
+  win.webContents.once("did-finish-load", () => setTimeout(startSetup, 50));
+  setTimeout(startSetup, 2000); // never wait longer than this for the loading page
 };
 const syncGui = async (windowUpdate) => _syncGui(win, appRoot, windowUpdate);
 
@@ -370,7 +389,11 @@ app.whenReady().then(async () => {
         resolve();
       }
     };
-    win.webContents.once("did-finish-load", finish);
+    // The loading page finishes first; wait for the real first page (GUI or login).
+    const onLoad = () => {
+      if (!win.webContents.getURL().includes("/src/loading/")) finish();
+    };
+    win.webContents.on("did-finish-load", onLoad);
     win.webContents.once("did-fail-load", finish);
     setTimeout(finish, 15000);
   });
@@ -540,6 +563,35 @@ const setMenu = () => _setMenu({ win, appRoot, app });
 const { ipcMain } = require("electron");
 const childProcess = require("child_process");
 
+// Checks that a Python candidate runs, WITHOUT blocking the main process. These checks used
+// spawnSync on Electron's main thread; on Windows the first start of python.exe after install
+// (Defender scans it) takes up to seconds, and the window froze ("Not responding") on the menu page
+// while the startup health check ran. Interpreters that pass are remembered for this session, so
+// running code does not start an extra Python process every time.
+const verifiedPython = new Map(); // candidate -> version string
+const checkPython = (candidate) => {
+  if (verifiedPython.has(candidate)) {
+    return Promise.resolve({ ok: true, version: verifiedPython.get(candidate) });
+  }
+  // `--version` succeeds even when the interpreter can't find its standard library (a relocated
+  // venv), so run real code: such a candidate fails here and the next one is used.
+  const code = "import encodings, sys; print('Python ' + sys.version.split()[0])";
+  const args = candidate === "py" ? ["-3", "-c", code] : ["-c", code];
+  return new Promise((resolve) => {
+    childProcess.execFile(
+      candidate,
+      args,
+      { timeout: 20000, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) return resolve({ ok: false, code: err.code });
+        const version = String(stdout || stderr || "").trim();
+        verifiedPython.set(candidate, version);
+        resolve({ ok: true, version });
+      },
+    );
+  });
+};
+
 let currentPythonProc = null;
 let currentPythonTimeout = null;
 const PYTHON_EXECUTION_TIMEOUT_MS = 30000; // 30s default timeout
@@ -631,15 +683,10 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
     const candidate = candidates[i];
     try {
       // Validate candidate can actually execute (mirrors health check logic)
-      const validateArgs =
-        candidate === "py" ? ["-3", "--version"] : ["--version"];
-      const check = childProcess.spawnSync(candidate, validateArgs, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (check.status !== 0) {
+      const check = await checkPython(candidate);
+      if (!check.ok) {
         logger.info(
-          `[Python] Skipping ${candidate} (spawnSync --version exit code ${check.status})`,
+          `[Python] Skipping ${candidate} (--version failed: ${check.code})`,
         );
         continue;
       }
@@ -967,13 +1014,8 @@ ipcMain.handle(
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i];
       try {
-        const validateArgs =
-          candidate === "py" ? ["-3", "--version"] : ["--version"];
-        const check = childProcess.spawnSync(candidate, validateArgs, {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        if (check.status !== 0) {
+        const check = await checkPython(candidate);
+        if (!check.ok) {
           continue;
         }
 
@@ -1168,15 +1210,9 @@ ipcMain.handle("nomopro-python-version", async () => {
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     try {
-      const validateArgs =
-        candidate === "py" ? ["-3", "--version"] : ["--version"];
-      const result = childProcess.spawnSync(candidate, validateArgs, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (result.status === 0) {
-        const version = (result.stdout || result.stderr || "").trim();
-        return { python: candidate, version };
+      const result = await checkPython(candidate);
+      if (result.ok) {
+        return { python: candidate, version: result.version };
       }
     } catch (e) {
       // try next candidate
@@ -1407,13 +1443,9 @@ app.whenReady().then(async () => {
       let found = false;
       for (const c of candidates) {
         try {
-          const res = childProcess.spawnSync(c, ["--version"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          if (res.status === 0) {
-            const ver = (res.stdout || res.stderr || "").trim();
-            logger.info(`Python health check OK: ${c} -> ${ver}`);
+          const res = await checkPython(c);
+          if (res.ok) {
+            logger.info(`Python health check OK: ${c} -> ${res.version}`);
             found = true;
             break;
           }

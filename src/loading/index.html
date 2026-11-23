@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Shown the moment the window opens, while the app finishes starting up (see createWindow in
+         main.js). Self-contained on purpose: no external fonts, scripts or network. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self'" />
+    <title>Nomokit</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #f5f7fb;
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+        color: #6b7280;
+        user-select: none;
+        cursor: progress;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+      }
+      img {
+        width: 96px;
+        height: 96px;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid #dbe4fb;
+        border-top-color: #4b7bec;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      p {
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation-duration: 2.4s;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" role="status" aria-live="polite">
+      <img src="../assets/img/nomokit.png" alt="Nomokit" />
+      <div class="spinner" aria-hidden="true"></div>
+      <p>Memuat Nomokit…</p>
+    </div>
+  </body>
+</html>
