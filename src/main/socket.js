@@ -1,80 +1,25 @@
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
-const { dialog, app } = require("electron");
+const { dialog } = require("electron");
 const logger = require("./logger");
+const { getAuth } = require("./auth-instance");
 
-function initSocket({ socket, appRoot, win }) {
-  socket.on("disconnect", () => {
-    if (win && !win.isDestroyed())
-      win.loadFile(path.join(appRoot, "/src/connection/index.html"));
-  });
-
-  socket.on("connect", () => {
-    try {
-      const token = JSON.parse(
-        fs.readFileSync(path.join(appRoot, "data/user.json"), "utf8"),
-      );
-      if (token.token !== undefined) {
-        const { setMenu } = require(path.join(appRoot, "src/main/menu"));
-        setMenu({ win, appRoot, app });
-        if (win && !win.isDestroyed())
-          win.loadFile(path.join(appRoot, "/src/gui/index.html"));
-      } else {
-        if (win && !win.isDestroyed())
-          win.loadFile(path.join(appRoot, "/src/auth/index.html"));
-      }
-    } catch (e) {
-      logger.error("Error handling socket connect:", e);
-    }
-  });
-
-  socket.on("login-fail", async (data) => {
-    try {
-      const token = JSON.parse(
-        fs.readFileSync(path.join(appRoot, "data/user.json"), "utf8"),
-      );
-      if (data === token.token) {
-        try {
-          await axios.get("https://nomo-kit.com/api/logout", {
-            headers: { Authorization: "Bearer " + token.token },
-          });
-        } catch (e) {
-          logger.warn("Logout request failed, continuing: " + e.message);
-        }
-        try {
-          fs.writeFileSync(
-            path.join(appRoot, "data/user.json"),
-            JSON.stringify({}),
-          );
-        } catch (e) {
-          logger.error("Failed to clear user.json: " + e.message);
-        }
-        dialog.showErrorBox(
+// One-device rule: the server tells a socket "login-fail <token>" when the same
+// account logs in somewhere else. Only that case matters here; connecting or
+// dropping never navigates the window (the IDE works offline and logged out).
+function initSocket({ auth = getAuth(), showError = dialog.showErrorBox } = {}) {
+  auth.onSocket((socket) => {
+    socket.on("login-fail", (data) => {
+      try {
+        const session = auth.getSession();
+        if (!session || data !== session.token) return;
+        auth.logout(); // local logout first, no relaunch, no navigation
+        showError(
           "Error: ",
           "Seseorang telah login dengan akun anda, silahkan login kembali",
         );
-        // app.exit() bypasses the "before-quit" event, so it won't run
-        // main.js's persistent-Python-session cleanup sweep -- sweep
-        // explicitly here first to avoid orphaning a running training
-        // session across this forced relaunch.
-        try {
-          require(path.join(
-            appRoot,
-            "main.js",
-          )).killAllPersistentPythonSessions();
-        } catch (e) {
-          logger.warn(
-            "Failed to sweep persistent python sessions before relaunch: " +
-              e.message,
-          );
-        }
-        app.relaunch();
-        app.exit();
+      } catch (err) {
+        logger.error("login-fail handler error: " + err.message);
       }
-    } catch (err) {
-      logger.error("login-fail handler error: " + err.message);
-    }
+    });
   });
 }
 

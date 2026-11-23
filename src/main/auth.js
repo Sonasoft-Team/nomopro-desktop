@@ -20,6 +20,7 @@ function createAuth({
   const userPath = path.join(appRoot, "data", "user.json");
   const cachePath = path.join(appRoot, "data", "kits-cache.json");
   const listeners = new Set();
+  const socketListeners = new Set();
   let socket = null;
 
   const readJson = (file) => {
@@ -71,7 +72,16 @@ function createAuth({
   };
 
   const getSocket = () => {
-    if (!socket) socket = socketFactory();
+    if (!socket) {
+      socket = socketFactory();
+      for (const cb of [...socketListeners]) {
+        try {
+          cb(socket);
+        } catch (e) {
+          logger.error("auth onSocket listener failed: " + e.message);
+        }
+      }
+    }
     return socket;
   };
 
@@ -198,11 +208,19 @@ function createAuth({
     return () => listeners.delete(cb);
   }
 
+  // cb(socket) runs once the socket exists (now if it already does), so the
+  // one-device-rule handler can attach to the auth-owned socket.
+  function onSocket(cb) {
+    socketListeners.add(cb);
+    if (socket) cb(socket);
+    return () => socketListeners.delete(cb);
+  }
+
   function start() {
     if (readStored()) connectSocket();
   }
 
-  return { getSession, completeLogin, login, logout, getKits, onChange, start };
+  return { getSession, completeLogin, login, logout, getKits, onChange, onSocket, start };
 }
 
 module.exports = { createAuth };

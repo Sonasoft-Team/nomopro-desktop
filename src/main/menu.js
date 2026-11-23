@@ -4,6 +4,7 @@ const { EventEmitter } = require("events");
 const { Menu, dialog, shell } = require("electron");
 const { execFile } = require("child_process");
 const logger = require("./logger");
+const { getAuth } = require("./auth-instance");
 
 const { runArduinoCoreAction } = require("./arduino-updater");
 const { showArduinoUpdateWindow } = require("./arduino-update-window");
@@ -123,8 +124,19 @@ async function showInstalledCores(appRoot) {
   });
 }
 
+let _authWatching = false;
+
 function setMenu({ win, appRoot, app }) {
   _menuState = { win, appRoot, app };
+  const auth = getAuth();
+  // Rebuild once per login/logout so "Masuk"/"Keluar" follows the session.
+  if (!_authWatching) {
+    _authWatching = true;
+    auth.onChange(() => {
+      if (_menuState) setMenu(_menuState);
+    });
+  }
+  const loggedIn = !!auth.getSession();
   let localLib = [];
   let version = {};
   try {
@@ -294,22 +306,30 @@ function setMenu({ win, appRoot, app }) {
         },
         { label: "Version GUI: " + version.gui, enabled: false },
         { label: "Version LINK: " + version.link, enabled: false },
-        {
-          label: "Sign Out",
-          click: async () => {
-            try {
-              const fsPromise = require("fs").promises;
-              const userDataPath = path.join(appRoot, "/data/user.json");
-              await fsPromise.writeFile(userDataPath, JSON.stringify({}), {
-                encoding: "utf8",
-              });
-              app.relaunch();
-              app.quit();
-            } catch (error) {
-              console.error("Error during sign out:", error);
+        loggedIn
+          ? {
+              label: "Keluar",
+              click: () => {
+                getAuth().logout();
+              },
             }
-          },
-        },
+          : {
+              label: "Masuk",
+              click: async () => {
+                try {
+                  await getAuth().login();
+                } catch (e) {
+                  if (e && e.code === "network") {
+                    dialog.showErrorBox(
+                      "Masuk",
+                      "Tidak dapat terhubung ke nomo-kit.com. Periksa koneksi internet lalu coba lagi.",
+                    );
+                  } else if (!e || e.code !== "cancelled") {
+                    logger.warn("Login from menu failed: " + (e && e.message));
+                  }
+                }
+              },
+            },
         {
           label: "Exit",
           click: async () => {

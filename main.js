@@ -40,29 +40,19 @@ app.on("child-process-gone", (event, details) => {
     `Child process gone: type=${d.type} reason=${d.reason} exitCode=${d.exitCode}`,
   );
 });
-const { io } = require("socket.io-client");
 const { autoUpdater } = require("electron-updater");
 
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 let win;
-let socket = null;
 let isInstallingUpdate = false;
-let token = {};
 // data/ holds user.json (login token) and is gitignored, so installers built in CI don't contain
 // it; without it login could not save the token ("Failed to save login data"). Create it first.
 try {
   fs.mkdirSync(path.join(__dirname, "data"), { recursive: true });
 } catch (e) {
   logger.warn("Could not create data/: " + e.message);
-}
-try {
-  token = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8"),
-  );
-} catch (e) {
-  logger.warn("Failed to read user.json, starting with empty token");
 }
 
 const getPythonCandidates = () => {
@@ -166,10 +156,6 @@ const INITIAL_LOAD_MAX_RETRIES = 5;
 // previously produced intermittent ERR_CONNECTION_REFUSED blank windows).
 const loadInitialPage = () => {
   if (!win || win.isDestroyed()) return;
-  if (token.token === undefined) {
-    win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-    return;
-  }
   if (app.isPackaged) {
     win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     return;
@@ -199,11 +185,6 @@ const loadInitialPage = () => {
 };
 app.commandLine.appendSwitch("ignore-certificate-errors");
 const createWindow = () => {
-  // Initialize socket inside createWindow so handlers can be registered before connect events
-  socket = io("http://15.235.140.95:2023", {
-    reconnection: true,
-    timeout: 10000,
-  });
   win = new BrowserWindow({
     webPreferences: {
       nodeIntegration: false,
@@ -302,7 +283,7 @@ const createWindow = () => {
     } = require("./src/main/diagnostic-bundle");
     const { registerOfflineCacheHandlers } = require("./src/main/offline-cache");
     const { registerRecoveryHandlers } = require("./src/main/recovery-mode");
-    registerIpc({ win, appRoot, socket });
+    registerIpc({ win, appRoot });
     const bundledPythonDir = path.join(
       app.isPackaged ? process.resourcesPath : __dirname,
       "python",
@@ -313,7 +294,13 @@ const createWindow = () => {
     registerDiagnosticHandlers({ appRoot });
     registerOfflineCacheHandlers({ appRoot });
     registerRecoveryHandlers({ appRoot });
-    initSocket({ socket, appRoot, win });
+    // Login is optional: the only socket is the one auth owns while logged in.
+    const { getAuth, setAuthParentWindow } = require("./src/main/auth-instance");
+    const { registerAuthIpc } = require("./src/main/auth-ipc");
+    setAuthParentWindow(win);
+    registerAuthIpc();
+    initSocket();
+    getAuth().start();
 
     // Set application menu (must be called after window is ready)
     _setMenu({ win, appRoot, app });
@@ -550,9 +537,6 @@ app.on("ready", async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (socket) {
-    socket.emit("logout", token);
-  }
   app.quit();
 });
 
@@ -625,15 +609,7 @@ const cleanupBeforeInstallUpdate = async () => {
   // Notify guarded update windows to bypass close prevention logic.
   app.emit("nomokit-force-close-update-windows");
 
-  // disconnect first so internal reconnect-prevention state is intact
-  try {
-    if (socket) {
-      socket.disconnect();
-      socket.removeAllListeners();
-    }
-  } catch (e) {
-    logger.warn("Update cleanup socket error: " + e.message);
-  }
+  // The auth socket is torn down with the process; nothing to close here.
 
   // Stop link server if active.
   try {
@@ -967,9 +943,8 @@ const cleanupPersistentSession = (sessionId) => {
 
 // Kills every tracked persistent-session child process and clears the map.
 // Called on app quit (see app.on("before-quit") below) and also invoked
-// explicitly from the two relaunch flows that bypass "before-quit" via
-// app.exit() -- see src/main/sync.js (_syncResource) and src/main/socket.js
-// (login-fail handler), both of which call this via
+// explicitly from the relaunch flow that bypasses "before-quit" via
+// app.exit() -- see src/main/sync.js (_syncResource), which calls this via
 // require(path.join(appRoot, "main.js")).killAllPersistentPythonSessions()
 // right before app.exit().
 const killAllPersistentPythonSessions = () => {
@@ -1472,8 +1447,8 @@ app.whenReady().then(async () => {
   }, 3000); // Run 3s after startup
 });
 
-// Exported so the relaunch flows in src/main/sync.js and src/main/socket.js
-// (both of which call app.exit(), which bypasses "before-quit") can sweep
+// Exported so the relaunch flow in src/main/sync.js
+// (which calls app.exit(), which bypasses "before-quit") can sweep
 // persistent Python sessions before the process is torn down. Node caches
 // this module after Electron's initial require of it as the app entry point,
 // so a later `require(path.join(appRoot, "main.js"))` from those modules

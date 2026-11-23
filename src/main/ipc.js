@@ -1,9 +1,8 @@
 const { ipcMain, dialog } = require("electron");
-const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
-const getHwid = require("node-machine-id").machineIdSync;
 const logger = require("./logger");
+const { getAuth } = require("./auth-instance");
 
 // Default storage path: Documents/OpenBlock (Windows) or ~/Documents/OpenBlock (macOS)
 const getDefaultStorageDir = () => {
@@ -126,7 +125,7 @@ const registerFileStorageHandlers = () => {
   });
 };
 
-function registerIpc({ win, appRoot, socket }) {
+function registerIpc({ win, appRoot }) {
   // Renderer errors -> main log. Throttle identical messages per frame so a
   // render loop can't flood nomopro.log.
   const rendererErrSeen = new Map();
@@ -149,90 +148,29 @@ function registerIpc({ win, appRoot, socket }) {
     );
   });
 
-  ipcMain.on("login", async (event, arg) => {
-    logger.info("Login (ipc)");
-    const hwid = getHwid();
-    const loginArg = { ...arg, hwid, app: "nomopro" };
-    try {
-      const res = await axios.post("https://nomo-kit.com/api/login", loginArg);
-      try {
-        fs.writeFileSync(
-          path.join(appRoot, "/data/user.json"),
-          JSON.stringify(res.data),
-        );
-      } catch (writeErr) {
-        logger.error("Failed to save user.json: " + writeErr.message);
-        if (event.sender && !event.sender.isDestroyed()) {
-          event.reply("login-fail", { error: "Failed to save login data" });
-        }
-        return;
-      }
-      socket.emit("login", res.data);
-      const { setMenu } = require(path.join(appRoot, "src/main/menu"));
-      setMenu({ win, appRoot, app: require("electron").app });
-      if (win && !win.isDestroyed()) {
-        win.loadFile(path.join(appRoot, "/src/gui/index.html"));
-      }
-    } catch (err) {
-      logger.error("login error: " + (err?.message || "unknown"));
-      if (event.sender && !event.sender.isDestroyed()) {
-        event.reply("login-fail", err?.response?.data ?? { error: "unknown" });
-      }
-    }
-  });
-
-  ipcMain.on("logout", async (event, arg) => {
-    try {
-      fs.writeFileSync(
-        path.join(appRoot, "data/user.json"),
-        JSON.stringify({}),
-      );
-    } catch (e) {
-      logger.error(`Failed to clear user.json on logout: ${e.message}`);
-    }
-    if (win && !win.isDestroyed())
-      win.loadFile(path.join(appRoot, "/src/auth/index.html"));
+  // Old GUI builds still send "logout" / ask for the user: answer from the
+  // shared auth session. Never relaunches or navigates the window.
+  ipcMain.on("logout", () => {
+    getAuth().logout();
   });
 
   // Legacy getUserData (send-based) — keep for backward compat
-  ipcMain.on("getUserData", (event, arg) => {
-    const userDataFilePath = path.join(appRoot, "data", "user.json");
-    fs.readFile(userDataFilePath, "utf8", (err, data) => {
-      const sendResponse = (payload) => {
-        if (event.sender && !event.sender.isDestroyed()) {
-          event.sender.send("responseUserData", payload);
-        }
-      };
-      if (err) {
-        logger.error("Error reading user data: " + err.message);
-        sendResponse({ error: "Failed to read user data" });
-        return;
-      }
-      try {
-        const parsedData = JSON.parse(data);
-        const userId = parsedData.user?.id;
-        sendResponse({ id: userId });
-      } catch (e) {
-        logger.error("Error parsing user data: " + e.message);
-        sendResponse({ error: "Failed to parse user data" });
-      }
-    });
+  ipcMain.on("getUserData", (event) => {
+    const session = getAuth().getSession();
+    if (event.sender && !event.sender.isDestroyed()) {
+      event.sender.send("responseUserData", session ? { id: session.user.id } : {});
+    }
   });
 
   // New invoke-based getUserData for preload bridge
   ipcMain.handle("getUserData", async () => {
-    const userDataFilePath = path.join(appRoot, "data", "user.json");
-    try {
-      const data = fs.readFileSync(userDataFilePath, "utf8");
-      const parsedData = JSON.parse(data);
-      const userId = parsedData.user?.id;
-      const userName = parsedData.user?.name || parsedData.user?.username || "";
-      const token = parsedData.token || "";
-      return { id: userId, name: userName, token };
-    } catch (e) {
-      logger.error(`Error reading user data: ${e.message}`);
-      return { error: "Failed to read user data" };
-    }
+    const session = getAuth().getSession();
+    if (!session) return {};
+    return {
+      id: session.user.id,
+      name: session.user.name || "",
+      token: session.token,
+    };
   });
 
   // Register file storage handlers

@@ -119,24 +119,29 @@ CI needs a `FAMILY_REPO_TOKEN` repository secret (read access to `Sonasoft-Team/
 releases). `desktop-ci.yml` skips the GUI download without it (e.g. pull requests from forks);
 `release.yml` fails without it.
 
-**Process split.** Standard Electron main/preload/renderer, but the app boots straight into static
-HTML pages loaded via `win.loadFile` rather than a single SPA shell — `main.js` decides which page to
-show based on socket connectivity and whether `data/user.json` has a token (auth vs GUI vs
-disconnected). `preload.js` is the bridge for the main GUI window; `preload-update.js` is a second,
+**Process split.** Standard Electron main/preload/renderer. The app always boots straight into the
+GUI (`src/gui/index.html`, or the dev server unpackaged): login is optional and there is no auth page.
+Logging in or out never reloads or navigates the window. `main.js` wires `auth-ipc.js`, the login
+pop-up parent window and `getAuth().start()` in `createWindow`; the Socket.IO connection exists only
+while logged in (owned by `auth.js`). `preload.js` is the bridge for the main GUI window; `preload-update.js` is a second,
 narrower bridge used only by the Arduino-tools update popup window.
 
 **`src/main/*.js` — one helper module per concern, all wired together in `main.js`'s `createWindow`:**
 
 | Module | Role |
 |---|---|
-| `ipc.js` | Core IPC: `login`/`logout`/`getUserData` handlers (calls `nomo-kit.com/api/login`), plus the renderer-facing file storage API (save/read/list/delete project files under `~/Documents/OpenBlock`). |
-| `socket.js` | Socket.IO client event handlers: reloads to the disconnected page, redirects to GUI/auth on `connect`, force-logs-out and relaunches on `login-fail` (another device logged into the same account). |
+| `auth.js` | `createAuth`: the optional desktop session (`getSession`, `completeLogin`, `login`, `logout`, `getKits`, `onChange`, `onSocket`, `start`). Owns `data/user.json`, the offline kits cache and the Socket.IO connection (created only when logged in). Never touches a window. |
+| `auth-instance.js` | Singleton `getAuth()` wiring `auth.js` to axios, `node-machine-id`, the socket factory and the login window; `setAuthParentWindow(win)`. |
+| `auth-window.js` | The modal login pop-up window (nomo-kit.com `/auth/popup?client=desktop`, `preload-auth.js`). |
+| `auth-ipc.js` | `registerAuthIpc()`: `auth:*` IPC handlers behind `electronAPI.auth` (trusted senders only) and the `auth:changed` broadcast. |
+| `ipc.js` | Core IPC: legacy `logout`/`getUserData` handlers answered from `getAuth()` (old GUI compat), plus the renderer-facing file storage API (save/read/list/delete project files under `~/Documents/OpenBlock`). |
+| `socket.js` | One-device enforcement only: on `login-fail` for the current token (same account logged in elsewhere) it calls `getAuth().logout()` locally and shows a message box. No navigation, no relaunch. |
 | `sync.js` | Startup self-update: `syncLibrary` pulls Arduino library bundle updates from `/api/check-update`; `syncGui`/`syncLink` poll `/api/check-update-dektop?app=<app version>` and, on version mismatch, download+extract a fresh `src/gui` or `src/link` zip (a GUI update also refreshes `<app>/nomokitjr`) and relaunch the app. |
 | `usage-ping.js` | Anonymous usage count: once per packaged launch, `POST nomo-kit.com/api/desktop/ping` with a random install ID (`userData/install-id`), app/GUI version and platform/arch — no account or machine data. Fire-and-forget from `main.js` `whenReady`; `NOMOKIT_NO_USAGE_PING=1` turns it off. Numbers: `php artisan desktop:stats` in `nomokit`. |
 | `link.js` | Boots the embedded `OpenBlockLink` WebSocket server (see below) and triggers a first-run/needed Arduino toolchain update via `arduino-updater.js` + `arduino-update-window.js`. |
 | `arduino-updater.js` | Runs `update.sh`/`update.bat` inside `src/link/tools/Arduino` (first-time AVR core bootstrap) and generic `arduino-cli core install/uninstall` actions, streaming line-by-line progress via an `EventEmitter`. |
 | `arduino-update-window.js` | A small always-on-top `BrowserWindow` (using `preload-update.js`) that renders that progress stream and blocks closing until the operation finishes. |
-| `menu.js` | Builds the native app menu: install/uninstall extra Arduino cores (ESP32/ESP8266/Nano 33 BLE/Uno R4), manage local `.zip` libraries, "Check Update" (re-runs `sync.js`), Sign Out, Exit. |
+| `menu.js` | Builds the native app menu: install/uninstall extra Arduino cores (ESP32/ESP8266/Nano 33 BLE/Uno R4), manage local `.zip` libraries, "Check Update" (re-runs `sync.js`), "Masuk" (logged out) / "Keluar" (logged in, rebuilt on `auth.onChange`), Exit. |
 | `pip-manager.js` | Per-user Python virtualenv lifecycle (bootstrap, install/uninstall/list/show packages, wheel cache) with a mutex so concurrent pip operations queue rather than race. |
 | `project-deps.js` | Per-project `requirements.txt` snapshot: generate/install/import/export/diff, keyed by a sanitized `projectId`. |
 | `safe-install.js` | Classifies pip packages as "safe" (pure-Python, from a large hardcoded allowlist) vs "risky" (native build required) and gates installs behind a warning/preflight check. |
@@ -167,16 +172,14 @@ exposes separate `micropython-flash` / `micropython-upload` / `micropython-detec
 call `src/link/src/upload/micropython.js` directly (bypassing the WebSocket server) for the
 renderer's MicroPython flashing UI.
 
-**Auxiliary windows — `src/auth`, `src/connection`, `src/update`.** These are plain static
-HTML/CSS/JS pages (Bootstrap-styled, Indonesian-language copy), not React/GUI-framework views —
-each is loaded wholesale via `win.loadFile` in place of the main GUI:
-- `src/auth/index.html` — login form; its own inline script `ipcRenderer.send("login", ...)`,
-  handled by `ipc.js`.
-- `src/connection/index.html` — "connection lost" holding page shown on Socket.IO `disconnect`
-  (`socket.js`), auto-retries and lets the user reload.
+**Auxiliary windows — `src/update` and the login pop-up.** `src/update` holds plain static
+HTML/CSS/JS pages (Bootstrap-styled, Indonesian-language copy), not React/GUI-framework views:
 - `src/update/index.html` (+ `arduino-update.html`) — shown while `sync.js` downloads a new
   `gui`/`link` bundle, and while `arduino-update-window.js` streams Arduino toolchain install
   progress respectively.
+- Login pop-up — a modal `BrowserWindow` (`auth-window.js`) over the IDE that loads
+  `https://nomo-kit.com/auth/popup?client=desktop`; the token comes back through `preload-auth.js`,
+  never in a URL. The IDE window is not replaced.
 
 **Bundled Python execution flow.** Renderer calls `window.nomoproDesktopPython.runPythonCode(code)`
 → `preload.js` `ipcRenderer.invoke("nomopro-python-run", ...)` → the handler in `main.js` picks a
@@ -198,7 +201,8 @@ a real contextIsolation'd renderer (`electronAPI` is already bound), so that tra
 code; don't assume both take effect.
 
 **Auth/licensing relationship to `nomokit` (Laravel backend).** Confirmed from source (not just
-inference): `src/main/ipc.js`'s `login` handler `axios.post`s to
+inference): the old `src/main/ipc.js` `login` handler (replaced by the shared login pop-up; `auth.js` now calls
+`/api/desktop/bind` with `{ hwid, app: "nomopro" }`) `axios.post`ed to
 `https://nomo-kit.com/api/login` with `{ email, password, hwid, app: "nomopro" }` — `hwid` from
 `node-machine-id`'s `machineIdSync()` — which lines up with `nomokit`'s `routes/api.php` `POST
 /login` route and the `hwid` / `hwid_pro` / `hwid_jr` fillable fields on `nomokit`'s `User` model
@@ -208,8 +212,8 @@ which `hwid_*` column to bind, though the exact selection logic lives in `nomoki
 `https://nomo-kit.com/api/check-update-dektop` (matching `nomokit`'s
 `CheckUpdateController::checkUpdateDesktop` route, typo included) to decide whether to download a
 newer `src/gui`/`src/link` bundle, and a separate `/api/check-update` call drives the Arduino
-library sync. `socket.js` also calls `nomo-kit.com/api/logout` when it detects a concurrent login
-from elsewhere (`login-fail` socket event) and force-relaunches the app. The desktop app does **not**
+library sync. `socket.js` logs out locally (`auth.logout()`, which also makes a best-effort `nomo-kit.com/api/logout`)
+when it detects a concurrent login from elsewhere (`login-fail` socket event); no relaunch. The desktop app does **not**
 appear to call `API\KitController::show` (the entitlement/serial-number-unlock endpoint documented in
 `nomokit/CLAUDE.md`) directly from anything read here — that check is likely performed
 server-side as part of what the bundled `src/gui` build fetches at runtime, not from this repo's own

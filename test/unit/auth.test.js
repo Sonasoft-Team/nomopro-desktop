@@ -256,4 +256,19 @@ describe("Main-process auth", () => {
     await auth.completeLogin({ token: "T1" });
     assert.strictEqual(n, 0);
   });
+
+  it("onSocket fires when the socket is created and for late subscribers", async () => {
+    const { auth, socket } = make();
+    const early = [];
+    auth.onSocket((s) => early.push(s));
+    assert.strictEqual(early.length, 0); // logged out: no socket yet
+    await auth.completeLogin({ token: "T1" });
+    assert.deepStrictEqual(early, [socket]);
+    const late = [];
+    auth.onSocket((s) => late.push(s));
+    assert.deepStrictEqual(late, [socket]);
+    await auth.logout();
+    await auth.completeLogin({ token: "T1" });
+    assert.strictEqual(early.length, 1); // same socket reused, not announced twice
+  });
 });

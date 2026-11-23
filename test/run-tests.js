@@ -366,6 +366,25 @@ try {
   assert.ok(win.includes("setWindowOpenHandler"), "auth-window.js must use setWindowOpenHandler");
   assert.ok(win.includes("contextIsolation: true"), "auth-window.js must set contextIsolation: true");
   assert.equal(typeof require("../src/main/auth-ipc").registerAuthIpc, "function");
+  // Start-up: IDE always loads, login optional, no page navigation from socket/ipc
+  const mainSrc = rd("main.js");
+  const sockSrc = rd("src/main/socket.js");
+  const ipcSrc = rd("src/main/ipc.js");
+  const menuSrc = rd("src/main/menu.js");
+  assert.ok(!mainSrc.includes("src/auth/index.html"), "main.js must not reference src/auth/index.html");
+  assert.ok(!sockSrc.includes("src/auth/index.html"), "socket.js must not reference src/auth/index.html");
+  assert.ok(!sockSrc.includes("loadFile("), "socket.js must not call loadFile(");
+  assert.ok(!sockSrc.includes("app.relaunch"), "socket.js must not call app.relaunch");
+  assert.ok(!ipcSrc.includes("src/auth/index.html"), "ipc.js must not reference src/auth/index.html");
+  assert.ok(!ipcSrc.includes('ipcMain.on("login"'), "ipc.js must not handle the old login IPC");
+  assert.ok(!mainSrc.includes('io("http://'), "main.js must not open its own socket");
+  assert.ok(mainSrc.includes("src/gui/index.html"), "main.js must load src/gui/index.html");
+  assert.ok(!/token\.token\s*===\s*undefined/.test(mainSrc), "main.js must not gate the first page on a token");
+  assert.ok(mainSrc.includes("registerAuthIpc") && mainSrc.includes("setAuthParentWindow") && mainSrc.includes("getAuth().start()"), "main.js must wire auth ipc, parent window and start()");
+  assert.ok(menuSrc.includes('"Masuk"') && menuSrc.includes('"Keluar"'), "menu.js must contain Masuk and Keluar");
+  assert.ok(!menuSrc.includes("Sign Out"), "menu.js must not contain Sign Out");
+  assert.ok(menuSrc.includes("onChange"), "menu.js must rebuild on auth onChange");
+  assert.ok(!fs.existsSync(path.join(ROOT, "src/auth")), "src/auth must be deleted");
   console.log("  ✓ Login window / auth bridge checks passed");
 } catch (e) {
   console.error("  ✗ Login window / auth bridge checks failed:", e.message);
