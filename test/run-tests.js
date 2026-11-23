@@ -171,6 +171,29 @@ if (fs.existsSync(MOCHA)) {
   console.log("  ⚠ mocha not found, skipping file storage tests");
 }
 
+// Unit tests: anonymous usage ping
+console.log("\n--- Usage ping unit tests ---");
+if (fs.existsSync(MOCHA)) {
+  const pingResult = spawnSync(
+    process.execPath,
+    [MOCHA, path.join(__dirname, "unit", "usage-ping.test.js")],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd: ROOT },
+  );
+  if (pingResult.status === 0) {
+    console.log(pingResult.stdout
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => "  " + l)
+      .join("\n"));
+  } else {
+    console.error(pingResult.stdout);
+    console.error(pingResult.stderr);
+    exitCode = 1;
+  }
+} else {
+  console.log("  ⚠ mocha not found, skipping usage ping tests");
+}
+
 // 4. Unit tests: Pip manager
 console.log("\n--- Pip manager unit tests ---");
 if (fs.existsSync(MOCHA)) {

@@ -364,6 +364,14 @@ app.whenReady().then(async () => {
       `tools=${path.join(__dirname, "src/link/tools")} ` +
       `arduinoData=${getArduinoDataRoot()}`,
   );
+  // Anonymous install/active-user count (src/main/usage-ping.js). Fire and forget.
+  require("./src/main/usage-ping").sendUsagePing({
+    userDataDir: app.getPath("userData"),
+    appRoot,
+    appVersion: app.getVersion(),
+    packaged: app.isPackaged,
+    logger,
+  });
   migrateArduinoData(__dirname);
   ensureArduinoDataDir();
   // libraries stay at src/link/tools/Arduino/libraries — no AppData mirror needed
