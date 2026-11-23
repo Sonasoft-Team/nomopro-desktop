@@ -74,6 +74,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     error.style.display = "none";
   }
 
+  const forgot = document.getElementById("forgot");
+  if (forgot !== null) {
+    forgot.addEventListener("click", (e) => {
+      e.preventDefault();
+      shell.openExternal("https://nomo-kit.com/password/reset");
+    });
+  }
+
   const email = document.getElementById("email");
   const password = document.getElementById("password");
 
