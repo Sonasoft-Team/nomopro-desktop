@@ -380,6 +380,7 @@ try {
   assert.ok(!sockSrc.includes("app.relaunch"), "socket.js must not call app.relaunch");
   assert.ok(!ipcSrc.includes("src/auth/index.html"), "ipc.js must not reference src/auth/index.html");
   assert.ok(!ipcSrc.includes('ipcMain.on("login"'), "ipc.js must not handle the old login IPC");
+  assert.equal((ipcSrc.match(/if \(!fromApp\(event\)\)/g) || []).length, 3, "ipc.js legacy getUserData (on + handle) and logout must be sender-guarded");
   assert.ok(!mainSrc.includes('io("http://'), "main.js must not open its own socket");
   assert.ok(mainSrc.includes("src/gui/index.html"), "main.js must load src/gui/index.html");
   assert.ok(!/token\.token\s*===\s*undefined/.test(mainSrc), "main.js must not gate the first page on a token");

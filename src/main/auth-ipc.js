@@ -14,8 +14,12 @@ function isTrustedAppUrl(url, { packaged } = {}) {
   }
 }
 
+function isTrustedSender(event, { packaged } = {}) {
+  return !!(event && event.senderFrame) && isTrustedAppUrl(event.senderFrame.url, { packaged });
+}
+
 const trusted = (url) => isTrustedAppUrl(url, { packaged: app.isPackaged });
-const senderOk = (event) => !!event.senderFrame && trusted(event.senderFrame.url);
+const senderOk = (event) => isTrustedSender(event, { packaged: app.isPackaged });
 const guarded = (fn) => (event, ...args) =>
   senderOk(event) ? fn(...args) : { ok: false, code: "forbidden" };
 
@@ -63,4 +67,4 @@ function registerAuthIpc() {
   });
 }
 
-module.exports = { registerAuthIpc, isTrustedAppUrl, broadcastAuthChanged };
+module.exports = { registerAuthIpc, isTrustedAppUrl, isTrustedSender, broadcastAuthChanged };

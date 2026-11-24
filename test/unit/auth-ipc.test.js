@@ -60,3 +60,16 @@ describe("broadcastAuthChanged", () => {
     assert.deepStrictEqual(good.got, [["auth:changed", S]]);
   });
 });
+
+describe("isTrustedSender", () => {
+  const { isTrustedSender } = require("../../src/main/auth-ipc");
+  const ev = (url) => ({ senderFrame: url === undefined ? null : { url } });
+  it("accepts the app's own frames only", () => {
+    assert.strictEqual(isTrustedSender(ev("file:///app/index.html"), { packaged: true }), true);
+    assert.strictEqual(isTrustedSender(ev("http://127.0.0.1:8601/"), { packaged: false }), true);
+    assert.strictEqual(isTrustedSender(ev("http://127.0.0.1:8601/"), { packaged: true }), false);
+    assert.strictEqual(isTrustedSender(ev("https://youtube.com/embed/x"), { packaged: true }), false);
+    assert.strictEqual(isTrustedSender(ev(undefined), { packaged: true }), false);
+    assert.strictEqual(isTrustedSender({}, { packaged: true }), false);
+  });
+});

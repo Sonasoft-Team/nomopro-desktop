@@ -1,8 +1,13 @@
-const { ipcMain, dialog } = require("electron");
+const { ipcMain, dialog, app } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const logger = require("./logger");
 const { getAuth } = require("./auth-instance");
+const { isTrustedSender } = require("./auth-ipc");
+
+// The legacy handlers hand out the session token: app frames only, never a
+// remote subframe (e.g. an embedded video).
+const fromApp = (event) => isTrustedSender(event, { packaged: app.isPackaged });
 
 // Default storage path: Documents/OpenBlock (Windows) or ~/Documents/OpenBlock (macOS)
 const getDefaultStorageDir = () => {
@@ -150,12 +155,14 @@ function registerIpc({ win, appRoot }) {
 
   // Old GUI builds still send "logout" / ask for the user: answer from the
   // shared auth session. Never relaunches or navigates the window.
-  ipcMain.on("logout", () => {
+  ipcMain.on("logout", (event) => {
+    if (!fromApp(event)) return;
     getAuth().logout();
   });
 
   // Legacy getUserData (send-based) — keep for backward compat
   ipcMain.on("getUserData", (event) => {
+    if (!fromApp(event)) return; // no reply: it would land in the main frame
     const session = getAuth().getSession();
     if (event.sender && !event.sender.isDestroyed()) {
       event.sender.send("responseUserData", session ? { id: session.user.id } : {});
@@ -163,7 +170,8 @@ function registerIpc({ win, appRoot }) {
   });
 
   // New invoke-based getUserData for preload bridge
-  ipcMain.handle("getUserData", async () => {
+  ipcMain.handle("getUserData", async (event) => {
+    if (!fromApp(event)) return {};
     const session = getAuth().getSession();
     if (!session) return {};
     return {
