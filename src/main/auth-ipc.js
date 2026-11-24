@@ -19,6 +19,25 @@ const senderOk = (event) => !!event.senderFrame && trusted(event.senderFrame.url
 const guarded = (fn) => (event, ...args) =>
   senderOk(event) ? fn(...args) : { ok: false, code: "forbidden" };
 
+// wc.send() only reaches a window's main frame; the ML and C++ iframes run the
+// preload too and must hear auth changes, so send to every trusted frame.
+function broadcastAuthChanged(windows, session, { isTrusted, loginWebContents = null }) {
+  for (const w of windows) {
+    if (w.isDestroyed()) continue;
+    const wc = w.webContents;
+    if (wc === loginWebContents) continue;
+    if (!isTrusted(wc.mainFrame.url)) continue;
+    for (const frame of wc.mainFrame.framesInSubtree) {
+      if (!isTrusted(frame.url)) continue;
+      try {
+        frame.send("auth:changed", session || null);
+      } catch (e) {
+        /* frame went away mid-broadcast */
+      }
+    }
+  }
+}
+
 function registerAuthIpc() {
   const auth = getAuth();
 
@@ -37,15 +56,11 @@ function registerAuthIpc() {
   ipcMain.handle("auth:get-kits", guarded(() => auth.getKits()));
 
   auth.onChange(() => {
-    const session = auth.getSession();
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (w.isDestroyed()) continue;
-      const wc = w.webContents;
-      if (wc === getLoginWebContents()) continue;
-      if (!trusted(wc.mainFrame.url)) continue;
-      wc.send("auth:changed", session || null);
-    }
+    broadcastAuthChanged(BrowserWindow.getAllWindows(), auth.getSession(), {
+      isTrusted: trusted,
+      loginWebContents: getLoginWebContents(),
+    });
   });
 }
 
-module.exports = { registerAuthIpc, isTrustedAppUrl };
+module.exports = { registerAuthIpc, isTrustedAppUrl, broadcastAuthChanged };

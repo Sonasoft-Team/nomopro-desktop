@@ -15,3 +15,48 @@ describe("isTrustedAppUrl", () => {
     }
   });
 });
+
+describe("broadcastAuthChanged", () => {
+  const { broadcastAuthChanged } = require("../../src/main/auth-ipc");
+  const frame = (url) => ({ url, got: [], send(ch, v) { this.got.push([ch, v]); } });
+  const win = (frames, destroyed = false) => {
+    const wc = { mainFrame: { url: frames[0].url, framesInSubtree: frames } };
+    return { isDestroyed: () => destroyed, webContents: wc };
+  };
+  const isTrusted = (u) => isTrustedAppUrl(u, { packaged: true });
+  const S = { token: "T", user: { id: 1 } };
+
+  it("reaches the trusted main frame and trusted subframes, not untrusted ones", () => {
+    const main = frame("file:///app/index.html");
+    const ml = frame("file:///app/nomokit-ml/index.html");
+    const yt = frame("https://youtube.com/embed/x");
+    broadcastAuthChanged([win([main, ml, yt])], S, { isTrusted });
+    assert.deepStrictEqual(main.got, [["auth:changed", S]]);
+    assert.deepStrictEqual(ml.got, [["auth:changed", S]]);
+    assert.deepStrictEqual(yt.got, []);
+  });
+
+  it("skips the login window, destroyed windows and untrusted main frames; sends null when logged out", () => {
+    const login = frame("https://nomo-kit.com/auth/popup");
+    const loginWin = win([login]);
+    const gone = frame("file:///x");
+    const remote = frame("https://evil.com/");
+    const sub = frame("file:///y");
+    const ok = frame("file:///z");
+    broadcastAuthChanged(
+      [loginWin, win([gone], true), win([remote, sub]), win([ok])],
+      undefined,
+      { isTrusted, loginWebContents: loginWin.webContents },
+    );
+    assert.deepStrictEqual([login.got, gone.got, remote.got, sub.got], [[], [], [], []]);
+    assert.deepStrictEqual(ok.got, [["auth:changed", null]]);
+  });
+
+  it("a frame whose send throws does not stop the others", () => {
+    const bad = frame("file:///a");
+    bad.send = () => { throw new Error("detached"); };
+    const good = frame("file:///b");
+    broadcastAuthChanged([win([bad, good])], S, { isTrusted });
+    assert.deepStrictEqual(good.got, [["auth:changed", S]]);
+  });
+});
