@@ -289,6 +289,27 @@ describe("Main-process auth", () => {
     assert.ok(!calls.some((c) => c[1] && c[1].endsWith("/api/logout")), "no /api/logout");
   });
 
+  it("onLogout runs on logout(), logout({local:true}) and a 401 clear", async () => {
+    let n = 0;
+    const deps = { onLogout: () => n++ };
+    seedSession();
+    await make({ deps }).auth.logout();
+    assert.strictEqual(n, 1);
+    seedSession();
+    await make({ deps }).auth.logout({ local: true });
+    assert.strictEqual(n, 2);
+    seedSession();
+    await make({ deps, http: { get: async () => { throw httpErr(401); } } }).auth.getKits();
+    assert.strictEqual(n, 3);
+  });
+
+  it("a throwing onLogout does not block logout", async () => {
+    seedSession();
+    const { auth } = make({ deps: { onLogout: () => { throw new Error("boom"); } } });
+    await auth.logout();
+    assert.strictEqual(auth.getSession(), null);
+  });
+
   it("login maps a response-less axios error from completeLogin to code network", async () => {
     const { auth } = make({
       http: { post: async () => { throw Object.assign(new Error("Network Error"), { isAxiosError: true, code: "ERR_NETWORK" }); } },

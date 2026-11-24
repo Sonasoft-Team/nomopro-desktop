@@ -1,8 +1,12 @@
 const path = require("path");
-const { BrowserWindow, ipcMain, shell } = require("electron");
+const { BrowserWindow, ipcMain, shell, session } = require("electron");
 
 const ORIGIN = "https://nomo-kit.com";
 const LOGIN_URL = `${ORIGIN}/auth/popup?client=desktop`;
+// In-memory (no "persist:") so the nomo-kit.com web cookie never outlives the
+// app, and cleared on every logout so a shared lab PC can't offer
+// "Lanjut sebagai <previous user>".
+const LOGIN_PARTITION = "nomokit-login";
 
 function isAllowedLoginUrl(url) {
   try {
@@ -45,6 +49,7 @@ function openLoginWindow(parentWin) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: LOGIN_PARTITION,
     },
   });
   win.setMenuBarVisibility(false);
@@ -119,4 +124,18 @@ function getLoginWebContents() {
   return current && !current.win.isDestroyed() ? current.win.webContents : null;
 }
 
-module.exports = { openLoginWindow, getLoginWebContents, isAllowedLoginUrl, isExternalOpenable, LOGIN_URL };
+function clearLoginSession() {
+  return Promise.resolve()
+    .then(() => session.fromPartition(LOGIN_PARTITION).clearStorageData())
+    .catch(() => {});
+}
+
+module.exports = {
+  openLoginWindow,
+  getLoginWebContents,
+  clearLoginSession,
+  LOGIN_PARTITION,
+  isAllowedLoginUrl,
+  isExternalOpenable,
+  LOGIN_URL,
+};

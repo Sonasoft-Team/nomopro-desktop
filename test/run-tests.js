@@ -365,6 +365,9 @@ try {
   const win = rd("src/main/auth-window.js");
   assert.ok(win.includes("setWindowOpenHandler"), "auth-window.js must use setWindowOpenHandler");
   assert.ok(win.includes("contextIsolation: true"), "auth-window.js must set contextIsolation: true");
+  assert.ok(win.includes("partition: LOGIN_PARTITION") && /LOGIN_PARTITION = "nomokit-login"/.test(win), "auth-window.js must use the non-persistent nomokit-login partition");
+  assert.ok(win.includes("clearStorageData()"), "auth-window.js clearLoginSession must clear the login partition");
+  assert.ok(rd("src/main/auth-instance.js").includes("onLogout: clearLoginSession"), "auth-instance.js must clear the login session on logout");
   assert.equal(typeof require("../src/main/auth-ipc").registerAuthIpc, "function");
   // Start-up: IDE always loads, login optional, no page navigation from socket/ipc
   const mainSrc = rd("main.js");

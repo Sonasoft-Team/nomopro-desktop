@@ -14,6 +14,7 @@ function createAuth({
   getHwid,
   socketFactory,
   openLoginWindow,
+  onLogout = () => {},
   now = () => new Date(),
   logger,
 }) {
@@ -53,6 +54,16 @@ function createAuth({
       fs.rmSync(file, { force: true });
     } catch (e) {
       logger.error(`Failed to remove ${file}: ${e.message}`);
+    }
+  };
+
+  // Lets the caller drop state outside this module (the login window's web
+  // session) whenever the desktop session ends.
+  const runOnLogout = () => {
+    try {
+      onLogout();
+    } catch (e) {
+      logger.error("auth onLogout failed: " + e.message);
     }
   };
 
@@ -152,6 +163,7 @@ function createAuth({
     const stored = readStored();
     // Clear local state first: a slow or dead network must never block it.
     clearFiles();
+    runOnLogout();
     emitChange();
     if (local) {
       if (socket) socket.disconnect();
@@ -197,6 +209,7 @@ function createAuth({
         const cur = readStored();
         if (cur && cur.token === stored.token) {
           clearLocal();
+          runOnLogout();
           emitChange();
         }
         return EMPTY_KITS();
