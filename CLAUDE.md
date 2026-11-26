@@ -11,6 +11,11 @@ Repo: `Sonasoft-Team/nomopro-desktop` (public; transferred from `Xart22`, whose 
 `package.json` `repository` must name the Sonasoft-Team repo: electron-builder derives the GitHub
 owner it publishes to — and bakes into the installers' auto-update config — from that field.
 
+This is the desktop app for **both IDE tiers**. Jr is not a separate app: the family release's Jr
+build (from `nomokit-jr-mono`) ships as `nomokitjr/` and the Pro GUI opens it (see the GUI section
+below). The old standalone Jr desktop app, `Xart22/nomokit-jr-desktop`, is retired — fix Jr issues in
+`nomokit-jr-mono`, never there.
+
 Related but not checked out here: `Xart22/nomo-link`, the standalone legacy "Nomolink" flasher this
 repo's `src/link` was ported from (see the firmware-flashing section below); nomo-kit.com still
 links its macOS download.
