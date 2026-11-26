@@ -385,7 +385,7 @@ try {
   assert.ok(mainSrc.includes("src/gui/index.html"), "main.js must load src/gui/index.html");
   assert.ok(!/token\.token\s*===\s*undefined/.test(mainSrc), "main.js must not gate the first page on a token");
   assert.ok(mainSrc.includes("registerAuthIpc") && mainSrc.includes("setAuthParentWindow") && mainSrc.includes("getAuth().start()"), "main.js must wire auth ipc, parent window and start()");
-  assert.ok(menuSrc.includes('"Masuk"') && menuSrc.includes('"Keluar"'), "menu.js must contain Masuk and Keluar");
+  assert.ok(menuSrc.includes('"Login"') && menuSrc.includes('"Keluar"'), "menu.js must contain Login and Keluar");
   assert.ok(!menuSrc.includes("Sign Out"), "menu.js must not contain Sign Out");
   assert.ok(menuSrc.includes("onChange"), "menu.js must rebuild on auth onChange");
   assert.ok(!fs.existsSync(path.join(ROOT, "src/auth")), "src/auth must be deleted");

@@ -129,7 +129,7 @@ let _authWatching = false;
 function setMenu({ win, appRoot, app }) {
   _menuState = { win, appRoot, app };
   const auth = getAuth();
-  // Rebuild once per login/logout so "Masuk"/"Keluar" follows the session.
+  // Rebuild once per login/logout so "Login"/"Keluar" follows the session.
   if (!_authWatching) {
     _authWatching = true;
     auth.onChange(() => {
@@ -314,7 +314,7 @@ function setMenu({ win, appRoot, app }) {
               },
             }
           : {
-              label: "Masuk",
+              label: "Login",
               click: async () => {
                 try {
                   await getAuth().login();
@@ -322,10 +322,10 @@ function setMenu({ win, appRoot, app }) {
                   if (e && e.code === "cancelled") return;
                   logger.warn("Login from menu failed: " + (e && e.message));
                   dialog.showErrorBox(
-                    "Masuk",
+                    "Login",
                     e && e.code === "network"
                       ? "Tidak dapat terhubung ke nomo-kit.com. Periksa koneksi internet lalu coba lagi."
-                      : "Gagal masuk. Silakan coba lagi.",
+                      : "Gagal login. Silakan coba lagi.",
                   );
                 }
               },
